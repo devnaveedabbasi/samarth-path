@@ -1,6 +1,7 @@
 ﻿import bcrypt from 'bcryptjs';
 import User from '../../models/User.model.js';
-import { sendOtpEmail } from '../../utils/emailService.js';
+import Subscription from '../../models/Subscription.model.js';
+import { sendOtpSms } from '../../utils/smsService.js';
 import { signToken } from '../../utils/jwt.js';
 import { generateNumericOtp } from '../../utils/otp.js';
 import { ApiError } from '../../utils/errorHandler.js';
@@ -13,17 +14,18 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phoneRegex = /^(?:\+92|92|0)?3\d{9}$|^(?:\+91|91|0)?[6-9]\d{9}$/;
 function publicUserDoc(user) {
   const u = user.toObject ? user.toObject() : { ...user };
   delete u.password;
+  delete u.phoneOTP;
   delete u.emailOTP;
+  delete u.resetOTP;
   return u;
 }
 
-async function setEmailOtp(user, otpPlain) {
-  user.emailOTP = otpPlain;
+async function setPhoneOtp(user, otpPlain) {
+  user.phoneOTP = otpPlain;
   user.otpExpiry = new Date(Date.now() + OTP_TTL_MS);
   user.lastOTPSent = new Date();
   user.otpAttempts = 0;
@@ -32,110 +34,114 @@ async function setEmailOtp(user, otpPlain) {
 
 export async function register(req, res) {
   const name = String(req.body.name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
   const phone = String(req.body.phone || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
-  if (!name || !email || !phone || !password) {
-    throw new ApiError(400, 'Name, email, phone, and password are required.');
+  if (!name || !phone || !email || !password) {
+    throw new ApiError(400, 'Name, phone, email, and password are required.');
   }
 
+  
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
-    throw new ApiError(400, 'Invalid email address.');
+    throw new ApiError(400, 'Invalid email format.');
   }
+
   if (password.length < 8) {
     throw new ApiError(400, 'Password must be at least 8 characters.');
   }
 
-  if (!phoneRegex.test(phone)) {
-    throw new ApiError(400, 'Only Bangladesh phone numbers is allowed.');
-  }
-
-  const existing = await User.findOne({
-    $or: [{ email }, { phone }],
-  }).select('_id email phone isEmailVerified');
-
-  if (existing) {
-    if (existing.email === email) {
-      if (!existing.isEmailVerified) {
-        throw new ApiError(
-          409,
-          'This email is already registered but not verified. Use resend OTP or verify your email.'
-        );
-      }
-      throw new ApiError(408, 'Email already registered.');
-    }
+  const existingPhone = await User.findOne({ phone }).select('_id');
+  if (existingPhone) {
     throw new ApiError(408, 'Phone number already registered.');
   }
 
-  const hashed = await bcrypt.hash(password, SALT_ROUNDS);
-  const otp = generateNumericOtp(4);
+  const existingEmail = await User.findOne({ email }).select('_id');
+  if (existingEmail) {
+    throw new ApiError(408, 'Email already registered.');
+  }
+
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+  const otp = generateNumericOtp(6);
 
   const user = await User.create({
     name,
-    email,
     phone,
-    password: hashed,
+    email,
+    password: hashedPassword,
     role: 'user',
     status: 'pending',
-    isEmailVerified: false,
-    emailOTP: otp,
+    isPhoneVerified: false,
+    isEmailVerified: false, // Assuming we add email verification later if needed
+    phoneOTP: otp,
     otpExpiry: new Date(Date.now() + OTP_TTL_MS),
     otpAttempts: 0,
     lastOTPSent: new Date(),
   });
 
+  // Create trial subscription
+  const subscription = await Subscription.create({
+    userId: user._id,
+    status: 'trial',
+    expiryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+  });
 
-  await sendOtpEmail(email, otp);
+  user.subscriptionID = subscription._id;
+  await user.save();
+
+  await sendOtpSms(phone, otp);
 
   res.status(201).json(
     new ApiResponse(
       201,
       {
         userId: user._id,
+        phone: user.phone,
         email: user.email,
         expiresInMinutes: Math.round(OTP_TTL_MS / 60000),
       },
-      'Account created. Enter the OTP sent to your email.'
+      'Account created. Enter the OTP sent to your phone to verify.'
     )
   );
 }
 
-export async function verifyEmail(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+export async function verifyPhone(req, res) {
+  const phone = String(req.body.phone || '').trim();
   const otp = String(req.body.otp || '').trim();
 
-  if (!email || !otp) {
-    throw new ApiError(400, 'Email and OTP are required.');
+  if (!phone || !otp) {
+    throw new ApiError(400, 'Phone number and OTP are required.');
   }
 
-  const user = await User.findOne({ email, role: 'user' });
+  const user = await User.findOne({ phone, role: 'user' });
 
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
-  if (user.isEmailVerified) {
-    throw new ApiError(407, 'Email is already verified.');
+  if (user.isPhoneVerified) {
+    throw new ApiError(407, 'Phone is already verified.');
   }
 
   if (user.otpAttempts >= MAX_OTP_ATTEMPTS) {
     throw new ApiError(429, 'Too many failed attempts. Request a new OTP.');
   }
 
-  if (!user.emailOTP || !user.otpExpiry || user.otpExpiry < new Date()) {
+  if (!user.phoneOTP || !user.otpExpiry || user.otpExpiry < new Date()) {
     user.otpAttempts += 1;
     await user.save();
     throw new ApiError(410, 'OTP expired or invalid. Request a new OTP.');
   }
 
-  if (user.emailOTP !== otp) {
+  if (user.phoneOTP !== otp) {
     user.otpAttempts += 1;
     await user.save();
     throw new ApiError(401, 'Invalid OTP.');
   }
 
-  user.isEmailVerified = true;
-  user.emailOTP = undefined;
+  user.isPhoneVerified = true;
+  user.phoneOTP = undefined;
   user.otpExpiry = undefined;
   user.otpAttempts = 0;
   user.status = 'approved';
@@ -151,25 +157,22 @@ export async function verifyEmail(req, res) {
         token,
         user: publicUserDoc(fresh),
       },
-      'Email verified successfully.'
+      'Phone verified successfully.'
     )
   );
 }
 
 export async function resendOtp(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
 
-  if (!email) {
-    throw new ApiError(400, 'Email is required.');
+  if (!phone) {
+    throw new ApiError(400, 'Phone number is required.');
   }
 
-  const user = await User.findOne({ email, role: 'user' });
+  const user = await User.findOne({ phone, role: 'user' });
 
   if (!user) {
     throw new ApiError(404, 'User not found.');
-  }
-  if (user.isEmailVerified) {
-    throw new ApiError(407, 'Email is already verified.');
   }
 
   if (user.lastOTPSent && Date.now() - user.lastOTPSent.getTime() < RESEND_COOLDOWN_MS) {
@@ -179,35 +182,40 @@ export async function resendOtp(req, res) {
     throw new ApiError(429, `Please wait ${waitSec} seconds before requesting another OTP.`);
   }
 
-  const otp = generateNumericOtp(4);
-  await setEmailOtp(user, otp);
-  await sendOtpEmail(email, otp);
+  const otp = generateNumericOtp(6);
+  await setPhoneOtp(user, otp);
+  await sendOtpSms(phone, otp);
 
   res.status(200).json(
     new ApiResponse(
       200,
       { expiresInMinutes: Math.round(OTP_TTL_MS / 60000) },
-      'A new OTP has been sent to your email.'
+      'A new OTP has been sent to your phone.'
     )
   );
 }
 
 export async function login(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
   const password = String(req.body.password || '');
 
-  if (!email || !password) {
-    throw new ApiError(400, 'Email and password are required.');
+  if (!phone || !password) {
+    throw new ApiError(400, 'Phone number and password are required.');
   }
 
-  const user = await User.findOne({ email, role: 'user' }).select('+password');
+  const user = await User.findOne({ phone, role: 'user' }).select('+password');
 
   if (!user) {
-    throw new ApiError(401, 'Invalid email or password.');
+    throw new ApiError(401, 'Invalid phone number or password.');
   }
 
-  if (!user.isEmailVerified) {
-    throw new ApiError(403, 'Please verify your email before logging in.');
+  if (!user.isPhoneVerified) {
+    throw new ApiError(403, 'Please verify your phone before logging in.');
+  }
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
+    throw new ApiError(401, 'Invalid phone number or password.');
   }
 
   const allowedStatuses = ['approved'];
@@ -215,9 +223,29 @@ export async function login(req, res) {
     throw new ApiError(403, `Account not authorized. Current status: ${user.status}`);
   }
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) {
-    throw new ApiError(401, 'Invalid email or password.');
+  // Check subscription
+  const subscription = await Subscription.findOne({ userId: user._id });
+  if (!subscription) {
+    throw new ApiError(403, 'Subscription not found. Please contact support.');
+  }
+
+  const now = new Date();
+  if (subscription.status === 'trial' && subscription.trialEndDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+    throw new ApiError(403, 'Trial period expired. Please subscribe to continue.');
+  }
+  if (subscription.status === 'active' && subscription.expiryDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+    throw new ApiError(403, 'Subscription expired. Please renew.');
+  }
+  if (subscription.status !== 'trial' && subscription.status !== 'active') {
+    throw new ApiError(403, 'Subscription required. Please subscribe.');
   }
 
   const token = signToken(user._id, user.role);
@@ -231,9 +259,11 @@ export async function login(req, res) {
           _id: user._id,
           name: user.name,
           email: user.email,
-          role: user.role,
           phone: user.phone,
+          role: user.role,
           status: user.status,
+          isSubscribed: user.isSubscribed,
+          subscriptionStatus: subscription.status,
         },
       },
       'Login successful.'
@@ -242,19 +272,19 @@ export async function login(req, res) {
 }
 
 export async function forgotPassword(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
 
-  if (!email) {
-    throw new ApiError(400, 'Email is required.');
+  if (!phone) {
+    throw new ApiError(400, 'Phone number is required.');
   }
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ phone });
 
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
 
-  const otp = generateNumericOtp(4);
+  const otp = generateNumericOtp(6);
 
   user.resetOTP = otp;
   user.resetOtpExpiry = new Date(Date.now() + OTP_TTL_MS);
@@ -262,26 +292,26 @@ export async function forgotPassword(req, res) {
   user.lastOTPSent = new Date();
 
   await user.save();
-  await sendOtpEmail(email, otp);
+  await sendOtpSms(phone, otp);
 
   res.status(200).json(
     new ApiResponse(
       200,
       { expiresInMinutes: Math.round(OTP_TTL_MS / 60000) },
-      'Reset OTP sent to your email.'
+      'Reset OTP sent to your phone.'
     )
   );
 }
 
 export async function verifyResetOtp(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
   const otp = String(req.body.otp || '').trim();
 
-  if (!email || !otp) {
-    throw new ApiError(400, 'Email and OTP are required.');
+  if (!phone || !otp) {
+    throw new ApiError(400, 'Phone number and OTP are required.');
   }
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ phone });
 
   if (!user) {
     throw new ApiError(404, 'User not found.');
@@ -316,18 +346,18 @@ export async function verifyResetOtp(req, res) {
 }
 
 export async function setNewPassword(req, res) {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
   const newPassword = String(req.body.newPassword || '');
 
-  if (!email || !newPassword) {
-    throw new ApiError(400, 'Email and new password are required.');
+  if (!phone || !newPassword) {
+    throw new ApiError(400, 'Phone number and new password are required.');
   }
 
   if (newPassword.length < 8) {
     throw new ApiError(400, 'Password must be at least 8 characters.');
   }
 
-  const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ phone }).select('+password');
 
   if (!user) {
     throw new ApiError(404, 'User not found.');
@@ -394,10 +424,12 @@ export async function changePassword(req, res) {
 }
 
 export async function me(req, res) {
-  const user = await User.findById(req.user._id);
+  const user = await User.findById(req.user._id).populate('subscriptionID');
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
+
+  const subscription = user.subscriptionID;
 
   res.status(200).json(
     new ApiResponse(
@@ -409,6 +441,14 @@ export async function me(req, res) {
         role: user.role,
         phone: user.phone,
         status: user.status,
+        isSubscribed: user.isSubscribed,
+        subscription: subscription ? {
+          status: subscription.status,
+          expiryDate: subscription.expiryDate,
+          trialEndDate: subscription.trialEndDate,
+          planName: subscription.planName,
+          price: subscription.price,
+        } : null,
       },
       'User profile retrieved successfully.'
     )

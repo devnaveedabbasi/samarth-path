@@ -6,6 +6,7 @@ import routes from "./routes/index.js";
 import cors from "cors";
 import requestLogger from "./middleware/requestLogger.js";
 import { ApiError } from "./utils/errorHandler.js";
+import "./utils/cronJobs.js"
 
 const app = express();
 

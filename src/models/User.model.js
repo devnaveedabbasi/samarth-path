@@ -3,9 +3,9 @@ import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  phone: { type: String, required: true, unique: true ,length: 15},
-  password: { type: String, required: true, select: false },
+  email: { type: String, unique: true, sparse: true },
+  phone: { type: String, required: true, unique: true, length: 15 },
+  password: { type: String, select: false },
   role: {
     type: String,
     enum: ['user', 'admin'],
@@ -18,7 +18,8 @@ const userSchema = new mongoose.Schema({
   },
 
   isEmailVerified: { type: Boolean, default: false },
-  emailOTP: { type: String },
+  isPhoneVerified: { type: Boolean, default: false },
+  phoneOTP: { type: String },
   otpExpiry: { type: Date },
   otpAttempts: { type: Number, default: 0 },
 
@@ -28,6 +29,13 @@ const userSchema = new mongoose.Schema({
   resetPasswordVerified: { type: Boolean, default: false },
   lastOTPSent: { type: Date },
   profileLastUpdated: { type: Date },
+
+  // Subscription reference
+  isSubscribed: { type: Boolean, default: false },
+  subscriptionID: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subscription'
+  },
 
 }, {
   timestamps: true,

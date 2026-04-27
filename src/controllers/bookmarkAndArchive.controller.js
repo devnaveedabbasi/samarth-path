@@ -1,0 +1,176 @@
+// controllers/bookmarkAndArchive.controller.js
+import DailyContent from '../models/Content.model.js';
+import Bookmark from '../models/Bookmark.model.js';
+import Archive from '../models/Archive.model.js';
+import User from '../models/User.model.js';
+import Subscription from '../models/Subscription.model.js';
+import { ApiError } from '../utils/errorHandler.js';
+import { ApiResponse } from '../utils/apiResponse.js';
+
+export async function bookmarkContent(req, res) {
+  const userId = req.user._id;
+  const { contentId } = req.body;
+
+  if (!contentId) {
+    throw new ApiError(400, 'Content ID is required.');
+  }
+
+  const content = await DailyContent.findById(contentId);
+  if (!content) {
+    throw new ApiError(404, 'Content not found.');
+  }
+
+  const existingBookmark = await Bookmark.findOne({ userId, contentId });
+  if (existingBookmark) {
+    throw new ApiError(400, 'Content is already bookmarked.');
+  }
+
+  const bookmark = await Bookmark.create({ userId, contentId });
+  content.bookmarksCount += 1;
+  await content.save();
+
+  res.status(201).json(
+    new ApiResponse(
+      201,
+      { bookmarkId: bookmark._id },
+      'Content bookmarked successfully.'
+    )
+  );
+}
+
+export async function removeBookmark(req, res) {
+  const userId = req.user._id;
+  const { contentId } = req.body;
+
+  if (!contentId) {
+    throw new ApiError(400, 'Content ID is required.');
+  }
+
+  const bookmark = await Bookmark.findOne({ userId, contentId });
+  if (!bookmark) {
+    throw new ApiError(404, 'Content is not bookmarked.');
+  }
+
+  await Bookmark.deleteOne({ _id: bookmark._id });
+
+  const content = await DailyContent.findById(contentId);
+  if (content) {
+    content.bookmarksCount = Math.max(0, content.bookmarksCount - 1);
+    await content.save();
+  }
+
+  res.status(200).json(
+    new ApiResponse(200, {}, 'Bookmark removed successfully.')
+  );
+}
+
+export async function getBookmarks(req, res) {
+  const userId = req.user._id;
+
+  const bookmarkedIds = await Bookmark.find({ userId }).distinct('contentId');
+
+  const bookmarkedContent = await DailyContent.find({ _id: { $in: bookmarkedIds } })
+    .sort({ createdAt: -1 });
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      bookmarkedContent,
+      'Bookmarked content retrieved successfully.'
+    )
+  );
+}
+
+export async function getArchiveCalendar(req, res) {
+  const userId = req.user._id;
+  const user = await User.findById(userId).populate('subscriptionID');
+
+  if (!user) {
+    throw new ApiError(404, 'User not found.');
+  }
+
+  const subscription = user.subscriptionID;
+  let startDate;
+
+  // Trial users: last 3 days only
+  if (subscription.status === 'trial') {
+    startDate = new Date();
+    startDate.setDate(startDate.getDate() - 3);
+  } else {
+    // Paid users: full archive
+    startDate = new Date(subscription.startDate || '2020-01-01');
+  }
+
+  startDate.setHours(0, 0, 0, 0);
+
+  const archive = await Archive.find({
+    userId,
+    archivedAt: { $gte: startDate }
+  }).populate({
+    path: 'contentId',
+    select: 'contentType date unlocksAt textContent.title quizContent.question videoContent.title'
+  });
+
+  // Group by date
+  const groupedByDate = {};
+  archive.forEach(item => {
+    const dateKey = item.contentId.date.toISOString().split('T')[0];
+    if (!groupedByDate[dateKey]) {
+      groupedByDate[dateKey] = [];
+    }
+    groupedByDate[dateKey].push(item);
+  });
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        accessLevel: subscription.status === 'trial' ? 'limited' : 'full',
+        startDate: subscription.status === 'trial' ? startDate : null,
+        archive: groupedByDate
+      },
+      'Archive calendar retrieved successfully.'
+    )
+  );
+}
+
+export async function getArchivedContentByDate(req, res) {
+  const userId = req.user._id;
+  const { date } = req.params;
+
+  if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    throw new ApiError(400, 'Invalid date format. Use YYYY-MM-DD.');
+  }
+
+  const user = await User.findById(userId).populate('subscriptionID');
+  const subscription = user.subscriptionID;
+
+  // Check if trial user is within 3-day window
+  if (subscription.status === 'trial') {
+    const requestedDate = new Date(date);
+    const threeAgo = new Date();
+    threeAgo.setDate(threeAgo.getDate() - 3);
+    threeAgo.setHours(0, 0, 0, 0);
+
+    if (requestedDate < threeAgo) {
+      throw new ApiError(403, 'Trial users can only access the last 3 days of content.');
+    }
+  }
+
+  const targetDate = new Date(date);
+  const nextDate = new Date(targetDate);
+  nextDate.setDate(nextDate.getDate() + 1);
+
+  const archive = await Archive.find({
+    userId,
+    archivedAt: { $gte: targetDate, $lt: nextDate }
+  }).populate('contentId');
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      archive,
+      'Archived content for the date retrieved successfully.'
+    )
+  );
+}

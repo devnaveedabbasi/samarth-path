@@ -92,4 +92,62 @@ const authorize = (...roles) => {
   };
 };
 
-export { authMiddleware, authorize };
+const checkSubscription = async (req, res, next) => {
+  const user = req.user;
+  const Subscription = (await import('../models/Subscription.model.js')).default;
+  const subscription = await Subscription.findOne({ userId: user._id });
+
+  if (!subscription) {
+    return res.status(403).json({
+      success: false,
+      message: 'Subscription not found.'
+    });
+  }
+
+  const now = new Date();
+  if (subscription.status === 'trial' && subscription.trialEndDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+    return res.status(403).json({
+      success: false,
+      message: 'Trial period expired. Please subscribe to continue.'
+    });
+  }
+  if (subscription.status === 'active' && subscription.expiryDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+    return res.status(403).json({
+      success: false,
+      message: 'Subscription expired. Please renew.'
+    });
+  }
+  if (subscription.status !== 'trial' && subscription.status !== 'active') {
+    return res.status(403).json({
+      success: false,
+      message: 'Subscription required. Please subscribe.'
+    });
+  }
+
+  next();
+};
+
+const checkFullAccess = async (req, res, next) => {
+  const user = req.user;
+  const Subscription = (await import('../models/Subscription.model.js')).default;
+  const subscription = await Subscription.findOne({ userId: user._id });
+
+  if (!subscription || subscription.status !== 'active') {
+    return res.status(403).json({
+      success: false,
+      message: 'Full access requires active subscription.'
+    });
+  }
+
+  next();
+};
+
+export { authMiddleware, authorize, checkSubscription, checkFullAccess };
