@@ -15,6 +15,11 @@ router.use(checkSubscription);
 
 router.get('/', asyncHandler(dailyContentController.getContent));
 
+
+router.post('/quiz/submit', asyncHandler(quizAndWinnersController.submitQuizAnswer));
+router.get('/quiz/weekly-score', asyncHandler(quizAndWinnersController.getWeeklyScore));
+router.get('/quiz/weekly-winners', asyncHandler(quizAndWinnersController.getWeeklyWinners));
+
 // Like endpoints
 router.post('/like', asyncHandler(dailyContentController.likeContent));
 router.post('/unlike', asyncHandler(dailyContentController.unlikeContent));
@@ -33,13 +38,11 @@ router.get('/bookmarks', asyncHandler(bookmarkAndArchiveController.getBookmarks)
 router.post('/archive', asyncHandler(dailyContentController.archiveContent));
 router.post('/unarchive', asyncHandler(dailyContentController.unarchiveContent));
 
-// Quiz endpoints - User can submit answers and view scores
-router.post('/quiz/submit', asyncHandler(quizAndWinnersController.submitQuizAnswer));
-router.get('/quiz/weekly-score', asyncHandler(quizAndWinnersController.getWeeklyScore));
+
 
 // Winners endpoints - User can view winners
-router.get('/winners/weekly', asyncHandler(quizAndWinnersController.getWeeklyWinners));
-router.get('/winners/previous-week', asyncHandler(quizAndWinnersController.getPreviousWeekWinners));
+// router.get('/winners/weekly', asyncHandler(quizAndWinnersController.getWeeklyWinners));
+// router.get('/winners/previous-week', asyncHandler(quizAndWinnersController.getPreviousWeekWinners));
 
 // Archive & Calendar viewing endpoints
 router.get('/archive/calendar', asyncHandler(bookmarkAndArchiveController.getArchiveCalendar));

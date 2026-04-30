@@ -1,6 +1,8 @@
 import cron from 'node-cron';
 import moment from 'moment-timezone';
 import Content from '../models/Content.model.js';
+import { announceWeeklyWinners } from '../services/winner.service.js';
+
 
 let isProcessing = false;
 
@@ -42,4 +44,14 @@ cron.schedule('* * * * *', async () => {
 }, {
   scheduled: true,
   timezone: "Asia/Karachi"
+});
+
+
+//  WINNER ANNOUNCEMENT CRON - every Sunday at 12:00 AM (Karachi Time)
+cron.schedule('0 0 * * 0', async () => {
+    console.log("Running Weekly Winner Cron...");
+    await announceWeeklyWinners();
+}, {
+    scheduled: true,
+    timezone: "Asia/Karachi"
 });

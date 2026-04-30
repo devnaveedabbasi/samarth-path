@@ -105,16 +105,18 @@ const checkSubscription = async (req, res, next) => {
   }
 
   const now = new Date();
-  if (subscription.status === 'trial' && subscription.trialEndDate < now) {
-    subscription.status = 'expired';
-    await subscription.save();
-    user.isSubscribed = false;
-    await user.save();
-    return res.status(403).json({
-      success: false,
-      message: 'Trial period expired. Please subscribe to continue.'
-    });
-  }
+
+  //  TODO: Trial expiry handling - currently we allow access but can restrict in other middleware/controllers based on subscription status. If you want to block access itself after trial expires, uncomment the below code and adjust logic as needed.
+  // if (subscription.status === 'trial' && subscription.trialEndDate < now) {
+  //   subscription.status = 'expired';
+  //   await subscription.save();
+  //   user.isSubscribed = false;
+  //   await user.save();
+  //   return res.status(403).json({
+  //     success: false,
+  //     message: 'Trial period expired. Please subscribe to continue.'
+  //   });
+  // }
   if (subscription.status === 'active' && subscription.expiryDate < now) {
     subscription.status = 'expired';
     await subscription.save();
@@ -125,12 +127,14 @@ const checkSubscription = async (req, res, next) => {
       message: 'Subscription expired. Please renew.'
     });
   }
-  if (subscription.status !== 'trial' && subscription.status !== 'active') {
-    return res.status(403).json({
-      success: false,
-      message: 'Subscription required. Please subscribe.'
-    });
-  }
+
+  // TODO: Depending on your business logic, you might want to allow users with expired subscriptions to access but restrict content. If you want to block access itself for expired subscriptions, uncomment the below code and adjust logic as needed.
+  // if (subscription.status !== 'trial' && subscription.status !== 'active') {
+  //   return res.status(403).json({
+  //     success: false,
+  //     message: 'Subscription required. Please subscribe.'
+  //   });
+  // }
 
   next();
 };

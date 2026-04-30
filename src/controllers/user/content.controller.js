@@ -6,6 +6,8 @@ import Archive from '../../models/Archive.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import moment from 'moment-timezone';
+import QuizAttempt from '../../models/QuizAttempt.model.js';
+import mongoose from 'mongoose';
 
 // Helper function to check if content is unlocked based on current time
 
@@ -98,6 +100,151 @@ export async function getContent(req, res) {
     new ApiResponse(200, finalResponse, 'Content retrieved successfully.')
   );
 }
+
+
+export const submitQuizAnswer = async (req, res) => {
+  const { contentId, selectedOptionId, timeTakenSeconds } = req.body;
+  const userId = req.user._id;
+
+
+  if (!mongoose.Types.ObjectId.isValid(contentId)) {
+    throw new ApiError(400, "Invalid Quiz ID format.");
+  }
+
+  const quiz = await Content.findById(contentId);
+  if (!quiz) throw new ApiError(404, "Quiz not found");
+
+  const existingAttempt = await QuizAttempt.findOne({ userId, contentId });
+  if (existingAttempt) throw new ApiError(400, "Already attempted.");
+
+  const isCorrect = quiz.quizContent.correctOptionId === selectedOptionId;
+
+  const now = moment();
+  const weekNumber = now.isoWeek(); 
+  const year = now.year();          
+  const dayNumber = now.day();      
+
+  const attempt = await QuizAttempt.create({
+    userId,
+    contentId,
+    selectedOptionId,
+    isCorrect,
+    timeTakenSeconds,
+    weekNumber,
+    year,
+    dayNumber
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    isCorrect,
+    correctOptionId: quiz.quizContent.correctOptionId,
+    explanation: quiz.quizContent.explanation
+  }, "Quiz submitted."));
+};
+
+
+
+export const getWeeklyScore = async (req, res) => {
+  const userId = req.user._id;
+
+  // 1. Moment.js se current week aur year lein
+  const now = moment();
+  const currentWeek = now.isoWeek();
+  const currentYear = now.year();
+
+  // 2. Database mein current week ke sahi jawab dhoondein
+  const result = await QuizAttempt.aggregate([
+    {
+      $match: {
+        userId: userId,
+        weekNumber: currentWeek,
+        year: currentYear,
+        isCorrect: true // Sirf sahi answers count karne hain
+      }
+    },
+    {
+      $group: {
+        _id: null, // Sab ko group karke ek hi total banana hai
+        totalPoints: { $sum: 1 } // Har sahi jawab par +1
+      }
+    }
+  ]);
+
+  // 3. Agar koi attempt nahi mila toh result empty array hoga
+  const score = result.length > 0 ? result[0].totalPoints : 0;
+
+  res.status(200).json(
+    new ApiResponse(200, {
+      week: currentWeek,
+      year: currentYear,
+      totalScore: score
+    }, "Weekly score retrieved successfully.")
+  );
+};
+
+export const getWeeklyWinnersAndPrize = async (req, res) => {
+  const now = moment();
+  const currentWeek = now.isoWeek();
+  const currentYear = now.year();
+
+  // 1. Is hafte ka Prize dhoondein
+  const prize = await Prize.findOne({
+    weekNumber: currentWeek,
+    year: currentYear,
+    prizeType: 'weekly'
+  });
+
+  // 2. Top 10 Winners ki list (Aggregation Pipeline)
+  const winners = await QuizAttempt.aggregate([
+    {
+      $match: {
+        weekNumber: currentWeek,
+        year: currentYear,
+        isCorrect: true // Sirf sahi jawab wale users
+      }
+    },
+    {
+      $group: {
+        _id: "$userId",
+        totalScore: { $sum: 1 },
+        totalTime: { $sum: "$timeTakenSeconds" } // Tie-breaker ke liye total time
+      }
+    },
+    {
+      $sort: { 
+        totalScore: -1, // Pehle zyada score wale
+        totalTime: 1    // Phir kam time wale (fastest)
+      }
+    },
+    { $limit: 10 }, // Top 10 users
+    {
+      $lookup: {
+        from: "users", // Users collection se name aur avatar uthane ke liye
+        localField: "_id",
+        foreignField: "_id",
+        as: "userDetails"
+      }
+    },
+    { $unwind: "$userDetails" },
+    {
+      $project: {
+        _id: 1,
+        totalScore: 1,
+        totalTime: 1,
+        name: "$userDetails.name",
+        avatar: "$userDetails.avatar"
+      }
+    }
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(200, {
+      prize: prize || { title: "New Prize Coming Soon!", imageUrl: null },
+      winners: winners
+    }, "Weekly winners and prize fetched successfully.")
+  );
+};
+
 
 
 export async function likeContent(req, res) {

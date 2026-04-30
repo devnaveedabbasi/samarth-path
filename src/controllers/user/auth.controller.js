@@ -230,13 +230,15 @@ export async function login(req, res) {
   }
 
   const now = new Date();
-  if (subscription.status === 'trial' && subscription.trialEndDate < now) {
-    subscription.status = 'expired';
-    await subscription.save();
-    user.isSubscribed = false;
-    await user.save();
-    throw new ApiError(403, 'Trial period expired. Please subscribe to continue.');
-  }
+
+  // TODO: Trial expiry handling - currently we allow login but can restrict access to content in other middleware/controllers based on subscription status. If you want to block login itself after trial expires, uncomment the below code and adjust logic as needed.
+  // if (subscription.status === 'trial' && subscription.trialEndDate < now) {
+  //   subscription.status = 'expired';
+  //   await subscription.save();
+  //   user.isSubscribed = false;
+  //   await user.save();
+  //   throw new ApiError(403, 'Trial period expired. Please subscribe to continue.');
+  // }
   if (subscription.status === 'active' && subscription.expiryDate < now) {
     subscription.status = 'expired';
     await subscription.save();
@@ -244,9 +246,11 @@ export async function login(req, res) {
     await user.save();
     throw new ApiError(403, 'Subscription expired. Please renew.');
   }
-  if (subscription.status !== 'trial' && subscription.status !== 'active') {
-    throw new ApiError(403, 'Subscription required. Please subscribe.');
-  }
+
+  // TODO: Depending on your business logic, you might want to allow users with expired subscriptions to log in but restrict access to content. If you want to block login itself for expired subscriptions, uncomment the below code and adjust logic as needed.
+  // if (subscription.status !== 'trial' && subscription.status !== 'active') {
+  //   throw new ApiError(403, 'Subscription required. Please subscribe.');
+  // }
 
   const token = signToken(user._id, user.role);
 

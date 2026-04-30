@@ -9,7 +9,7 @@ const quizAttemptSchema = new mongoose.Schema({
   },
   contentId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'DailyContent',
+    ref: 'Content',
     required: true
   },
   selectedOptionId: {

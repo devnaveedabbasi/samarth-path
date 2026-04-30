@@ -77,22 +77,22 @@ export async function adminRegister(req, res) {
 }
 
 export async function adminLogin(req, res) {
-  const phone = String(req.body.phone || '').trim();
+  const email = String(req.body.email || '').trim();
   const password = String(req.body.password || '');
 
-  if (!phone || !password) {
-    throw new ApiError(400, 'Phone number and password are required.');
+  if (!email || !password) {
+    throw new ApiError(400, 'email number and password are required.');
   }
 
-  const user = await User.findOne({ phone, role: 'admin' }).select('+password');
+  const user = await User.findOne({ email, role: 'admin' }).select('+password');
 
   if (!user) {
-    throw new ApiError(401, 'Invalid phone number or password.');
+    throw new ApiError(401, 'Invalid email number or password.');
   }
 
   const match = await bcrypt.compare(password, user.password);
   if (!match) {
-    throw new ApiError(401, 'Invalid phone number or password.');
+    throw new ApiError(401, 'Invalid email number or password.');
   }
 
   const allowedStatuses = ['approved'];
