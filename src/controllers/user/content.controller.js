@@ -97,7 +97,7 @@ console.log("User ID in getContent:", userId);
   });
 
   res.status(200).json(
-    new ApiResponse(200, finalResponse, 'Content retrieved successfully.')
+    new ApiResponse(200, finalResponse, 'Content fetch successfully.')
   );
 }
 
