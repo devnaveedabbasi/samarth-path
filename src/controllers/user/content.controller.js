@@ -15,7 +15,7 @@ import mongoose from 'mongoose';
 
 export async function getContent(req, res) {
   const userId = req.user._id;
-
+console.log("User ID in getContent:", userId);
   const now = moment().tz("Asia/Karachi");
   const todayEnd = now.clone().endOf('day').toDate();
   const sevenDaysAgoStart = now.clone().subtract(6, 'days').startOf('day').toDate();
