@@ -30,23 +30,19 @@ router.get('/quiz/:contentId/attempts', asyncHandler(adminDailyContentController
 // VIDEO ROUTES
 router.post("/video",  upload.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.createVideoContent));
 router.get('/video', asyncHandler(adminDailyContentController.getAllVideoContent));
-// router.get('/video/:contentId', asyncHandler(adminDailyContentController.getVideoById));
-// router.put('/video/:contentId', asyncHandler(adminDailyContentController.updateVideoContent));
+router.get('/video/:contentId', asyncHandler(adminDailyContentController.getVideoById));
+router.put('/video/:contentId', upload.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.updateVideoContent));
 // router.delete('/video/:contentId', asyncHandler(adminDailyContentController.deleteVideoContent));
 
 
 // Content management endpoints
-router.get('/list', asyncHandler(adminDailyContentController.getDailyContentList));
-router.put('/:contentId', asyncHandler(adminDailyContentController.updateContent));
-router.delete('/:contentId', asyncHandler(adminDailyContentController.deleteContent));
+// router.get('/list', asyncHandler(adminDailyContentController.getDailyContentList));
+// router.put('/:contentId', asyncHandler(adminDailyContentController.updateContent));
+// router.delete('/:contentId', asyncHandler(adminDailyContentController.deleteContent));
 
 // Prize management
 router.post('/prize/create', asyncHandler(adminDailyContentController.createPrize));
-
-// Winners calculation
 router.post('/winners/calculate', asyncHandler(adminDailyContentController.calculateWeeklyWinners));
-
-// Analytics
 router.get('/:contentId/analytics', asyncHandler(adminDailyContentController.getContentAnalytics));
 
 export default router;

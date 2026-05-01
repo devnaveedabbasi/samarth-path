@@ -30,7 +30,7 @@ function getWeekNumber(date) {
 
 
 
-
+//  TEXT CONTENT
 
 export async function createTextContent(req, res) {
   const adminId = req.user._id;
@@ -165,8 +165,6 @@ export async function getContentById(req, res) {
     );
   }
 }
-
-
 
 export async function updateTextContent(req, res) {
   const { title, description, label, image, unlocksAt } = req.body;
@@ -546,8 +544,6 @@ export async function createVideoContent(req, res) {
   }
 }
 
-
-
 export async function getAllVideoContent(req, res) {
   // 1. Query parameters se page aur limit nikalna
   const page = parseInt(req.query.page) || 1; // Default page 1
@@ -586,62 +582,194 @@ export async function getAllVideoContent(req, res) {
   );
 }
 
-export async function getContentList(req, res) {
-  const { date } = req.query;
-  let query = { isActive: true };
 
+export async function getVideoById(req, res) {
+  const { contentId } = req.params;
+
+  if (!contentId) {
+    throw new ApiError(400, "Video ID is required.");
+  }
+
+  const video = await Content.findOne({
+    _id: contentId,
+    contentType: 'video'
+  }).populate('createdBy', 'name email');
+
+  if (!video) {
+    throw new ApiError(404, "Video content not found.");
+  }
+
+  res.status(200).json(
+    new ApiResponse(200, video, "Video content fetched successfully.")
+  );
+}
+
+
+export async function updateVideoContent(req, res) {
+  const { contentId: id } = req.params;
+  
+  // 1. Body safety check (req.body agar undefined ho)
+  const { title, description, unlocksAt, date, hasListenOnlyMode } = req.body || {};
+
+  // 2. Existing Content find karein
+  const content = await Content.findOne({ _id: id, contentType: "video" });
+  if (!content) {
+    throw new ApiError(404, "Video content not found.");
+  }
+
+  // 3. File Paths
+  const videoLocalPath = req.files?.video?.[0]?.path;
+  const thumbnailLocalPath = req.files?.image?.[0]?.path;
+
+  // 4. Duration Validation (Agar nayi video upload ho rahi hai)
+  let durationSeconds = content.videoContent.durationSeconds;
+  if (videoLocalPath) {
+    try {
+      const getVideoDuration = (filePath) => new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(filePath, (err, metadata) => {
+          if (err) return reject(err);
+          resolve(metadata.format.duration);
+        });
+      });
+
+      durationSeconds = await getVideoDuration(videoLocalPath);
+      if (durationSeconds > 420) {
+        if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+        if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
+        throw new ApiError(400, "Video duration exceeds 7 minutes limit.");
+      }
+    } catch (error) {
+      if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+      throw new ApiError(400, "Could not verify video duration.");
+    }
+  }
+
+  // 5. Date Validation (Check for date collision)
+  let videoDate = content.date;
   if (date) {
-    const targetDate = new Date(date);
-    targetDate.setHours(0, 0, 0, 0);
-    const nextDate = new Date(targetDate);
-    nextDate.setDate(nextDate.getDate() + 1);
-    query.date = { $gte: targetDate, $lt: nextDate };
+    videoDate = new Date(date);
+    videoDate.setHours(0, 0, 0, 0);
+
+    const existingVideo = await Content.findOne({
+      date: videoDate,
+      contentType: "video",
+      _id: { $ne: id } // Current video ko chhor kar check karein
+    });
+
+    if (existingVideo) {
+      if (videoLocalPath) fs.unlinkSync(videoLocalPath);
+      if (thumbnailLocalPath) fs.unlinkSync(thumbnailLocalPath);
+      throw new ApiError(400, `Video content for ${videoDate.toDateString()} already exists.`);
+    }
   }
 
-  const content = await Content.find(query).sort({ createdAt: -1 }).limit(100);
+  // 6. Cloudinary Uploads
+  let videoUrl = content.videoContent.videoUrl;
+  let thumbnailUrl = content.videoContent.thumbnail;
 
-  res.status(200).json(
-    new ApiResponse(200, content, 'Daily content list retrieved.')
+  if (videoLocalPath) {
+    const videoUpload = await uploadOnCloudinary(videoLocalPath);
+    videoUrl = videoUpload.secure_url;
+  }
+  if (thumbnailLocalPath) {
+    const thumbnailUpload = await uploadOnCloudinary(thumbnailLocalPath);
+    thumbnailUrl = thumbnailUpload.secure_url;
+  }
+
+  // 7. Update logic
+  const updatedContent = await Content.findByIdAndUpdate(
+    id,
+    {
+      $set: {
+        date: videoDate,
+        unlocksAt: unlocksAt || content.unlocksAt,
+        videoContent: {
+          title: title || content.videoContent.title,
+          description: description || content.videoContent.description,
+          videoUrl,
+          thumbnail: thumbnailUrl,
+          durationSeconds: Math.round(durationSeconds),
+          isAutoMute: true,
+          hasListenOnlyMode: hasListenOnlyMode !== undefined 
+            ? (hasListenOnlyMode === "true" || hasListenOnlyMode === true) 
+            : content.videoContent.hasListenOnlyMode,
+        },
+      },
+    },
+    { new: true }
+  );
+
+  return res.status(200).json(
+    new ApiResponse(200, updatedContent, "Video content updated successfully!")
   );
 }
 
-export async function updateContent(req, res) {
-  const { contentId } = req.params;
-  const updateData = req.body;
 
-  const content = await Content.findById(contentId);
-  if (!content) {
-    throw new ApiError(404, 'Content not found.');
-  }
 
-  // Prevent changing content type
-  if (updateData.contentType && updateData.contentType !== content.contentType) {
-    throw new ApiError(400, 'Cannot change content type.');
-  }
 
-  Object.assign(content, updateData);
-  await content.save();
 
-  res.status(200).json(
-    new ApiResponse(200, content, 'Content updated successfully.')
-  );
-}
 
-export async function deleteContent(req, res) {
-  const { contentId } = req.params;
 
-  const content = await Content.findById(contentId);
-  if (!content) {
-    throw new ApiError(404, 'Content not found.');
-  }
 
-  content.isActive = false;
-  await content.save();
 
-  res.status(200).json(
-    new ApiResponse(200, {}, 'Content deleted successfully.')
-  );
-}
+
+
+// export async function getContentList(req, res) {
+//   const { date } = req.query;
+//   let query = { isActive: true };
+
+//   if (date) {
+//     const targetDate = new Date(date);
+//     targetDate.setHours(0, 0, 0, 0);
+//     const nextDate = new Date(targetDate);
+//     nextDate.setDate(nextDate.getDate() + 1);
+//     query.date = { $gte: targetDate, $lt: nextDate };
+//   }
+
+//   const content = await Content.find(query).sort({ createdAt: -1 }).limit(100);
+
+//   res.status(200).json(
+//     new ApiResponse(200, content, 'Daily content list retrieved.')
+//   );
+// }
+
+// export async function updateContent(req, res) {
+//   const { contentId } = req.params;
+//   const updateData = req.body;
+
+//   const content = await Content.findById(contentId);
+//   if (!content) {
+//     throw new ApiError(404, 'Content not found.');
+//   }
+
+//   // Prevent changing content type
+//   if (updateData.contentType && updateData.contentType !== content.contentType) {
+//     throw new ApiError(400, 'Cannot change content type.');
+//   }
+
+//   Object.assign(content, updateData);
+//   await content.save();
+
+//   res.status(200).json(
+//     new ApiResponse(200, content, 'Content updated successfully.')
+//   );
+// }
+
+// export async function deleteContent(req, res) {
+//   const { contentId } = req.params;
+
+//   const content = await Content.findById(contentId);
+//   if (!content) {
+//     throw new ApiError(404, 'Content not found.');
+//   }
+
+//   content.isActive = false;
+//   await content.save();
+
+//   res.status(200).json(
+//     new ApiResponse(200, {}, 'Content deleted successfully.')
+//   );
+// }
 
 export async function createPrize(req, res) {
   const { title, description, imageUrl, weekNumber, year, prizeType = 'weekly' } = req.body;

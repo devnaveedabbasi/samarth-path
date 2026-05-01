@@ -5,7 +5,6 @@ import fs from "fs";
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const dir = "./public/temp";
-    // Agar folder nahi hai toh bana do (Automated fix)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -28,5 +27,7 @@ const fileFilter = (req, file, cb) => {
 export const upload = multer({ 
     storage,
     fileFilter,
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB
+    limits: { 
+        fileSize: 10 * 1024 * 1024 
+    }
 });
