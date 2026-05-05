@@ -15,7 +15,7 @@ export async function bookmarkContent(req, res) {
     throw new ApiError(400, 'Content ID is required.');
   }
 
-  const content = await DailyContent.findById(contentId);
+  const content = await DailyContent.findById(contentId).lean();
   if (!content) {
     throw new ApiError(404, 'Content not found.');
   }
@@ -26,13 +26,33 @@ export async function bookmarkContent(req, res) {
   }
 
   const bookmark = await Bookmark.create({ userId, contentId });
-  content.bookmarksCount += 1;
-  await content.save();
+
+  await DailyContent.findByIdAndUpdate(contentId, {
+    $inc: { bookmarksCount: 1 }
+  });
+
+  let filteredContent = {
+    _id: content._id,
+    contentType: content.contentType,
+    unlocksAt: content.unlocksAt,
+    date: content.date,
+  };
+
+  if (content.contentType === 'video') {
+    filteredContent.videoContent = content.videoContent;
+  } else if (content.contentType === 'quiz') {
+    filteredContent.quizContent = content.quizContent;
+  } else if (content.contentType === 'text') {
+    filteredContent.textContent = content.textContent;
+  }
 
   res.status(201).json(
     new ApiResponse(
       201,
-      { bookmarkId: bookmark._id },
+      {
+        bookmarkId: bookmark._id,
+        content: filteredContent
+      },
       'Content bookmarked successfully.'
     )
   );
@@ -69,13 +89,47 @@ export async function getBookmarks(req, res) {
 
   const bookmarkedIds = await Bookmark.find({ userId }).distinct('contentId');
 
-  const bookmarkedContent = await DailyContent.find({ _id: { $in: bookmarkedIds } })
-    .sort({ createdAt: -1 });
+  const bookmarkedContent = await DailyContent.find({
+    _id: { $in: bookmarkedIds }
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const formattedContent = bookmarkedContent.map((content) => {
+    let base = {
+      _id: content._id,
+      contentType: content.contentType,
+      unlocksAt: content.unlocksAt,
+      isNotified: content.isNotified,
+      date: content.date,
+      createdBy: content.createdBy,
+      isActive: content.isActive,
+      likesCount: content.likesCount,
+      commentsCount: content.commentsCount,
+      bookmarksCount: content.bookmarksCount,
+      createdAt: content.createdAt,
+      updatedAt: content.updatedAt,
+    };
+
+    if (content.contentType === 'video') {
+      base.videoContent = content.videoContent;
+    } else if (content.contentType === 'quiz') {
+      const { correctOptionId, ...quiz } = content.quizContent || {};
+      base.quizContent = quiz;
+    } else {
+      base.textContent = content.textContent;
+    }
+
+    return base;
+  });
 
   res.status(200).json(
     new ApiResponse(
       200,
-      bookmarkedContent,
+      {
+        totalBookmarks: bookmarkedIds.length, 
+        items: formattedContent             
+      },
       'Bookmarked content retrieved successfully.'
     )
   );
