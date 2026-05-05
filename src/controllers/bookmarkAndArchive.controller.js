@@ -109,6 +109,7 @@ export async function getBookmarks(req, res) {
       bookmarksCount: content.bookmarksCount,
       createdAt: content.createdAt,
       updatedAt: content.updatedAt,
+      isBookmarked: true 
     };
 
     if (content.contentType === 'video') {
@@ -127,14 +128,13 @@ export async function getBookmarks(req, res) {
     new ApiResponse(
       200,
       {
-        totalBookmarks: bookmarkedIds.length, 
-        items: formattedContent             
+        totalBookmarks: bookmarkedIds.length,
+        items: formattedContent
       },
       'Bookmarked content retrieved successfully.'
     )
   );
 }
-
 export async function getArchiveCalendar(req, res) {
   const userId = req.user._id;
   const user = await User.findById(userId).populate('subscriptionID');
