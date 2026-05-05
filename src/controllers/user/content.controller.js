@@ -8,6 +8,7 @@ import { ApiResponse } from '../../utils/apiResponse.js';
 import moment from 'moment-timezone';
 import QuizAttempt from '../../models/QuizAttempt.model.js';
 import mongoose from 'mongoose';
+import Bookmark from '../../models/Bookmark.model.js';
 
 // Helper function to check if content is unlocked based on current time
 
@@ -15,7 +16,7 @@ import mongoose from 'mongoose';
 
 export async function getContent(req, res) {
   const userId = req.user._id;
-console.log("User ID in getContent:", userId);
+
   const now = moment().tz("Asia/Karachi");
   const todayEnd = now.clone().endOf('day').toDate();
   const sevenDaysAgoStart = now.clone().subtract(6, 'days').startOf('day').toDate();
@@ -32,7 +33,8 @@ console.log("User ID in getContent:", userId);
   const enrichedContent = await Promise.all(
     contentList.map(async (content) => {
       const userLike = await Like.findOne({ userId, contentId: content._id });
-      const isArchived = await Archive.findOne({ userId, contentId: content._id });
+      // const isArchived = await Archive.findOne({ userId, contentId: content._id });
+      const isBookmarked = await Bookmark.findOne({ userId, contentId: content._id });
 
       const itemMoment = moment(content.date).tz("Asia/Karachi");
       let isUnlocked = false;
@@ -59,7 +61,8 @@ console.log("User ID in getContent:", userId);
         unlocksAt: content.unlocksAt,
         isUnlocked,
         isLiked: !!userLike,
-        isArchived: !!isArchived,
+        // isArchived: !!isArchived,
+        isBookmarked: !!isBookmarked,
         likesCount: content.likesCount || 0,
         commentsCount: content.commentsCount || 0,
         priority,

@@ -29,6 +29,10 @@ const userSchema = new mongoose.Schema({
   resetPasswordVerified: { type: Boolean, default: false },
   lastOTPSent: { type: Date },
   profileLastUpdated: { type: Date },
+  fcmToken: {
+    type: String,
+    default: null,
+  },
 
   // Subscription reference
   isSubscribed: { type: Boolean, default: false },
