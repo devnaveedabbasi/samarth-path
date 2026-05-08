@@ -35,7 +35,7 @@ export async function getContent(req, res) {
       const userLike = await Like.findOne({ userId, contentId: content._id });
       // const isArchived = await Archive.findOne({ userId, contentId: content._id });
       const isBookmarked = await Bookmark.findOne({ userId, contentId: content._id });
-
+console.log(`Processing content ID: ${content._id}, Date: ${content.date}, Unlocks At: ${content.unlocksAt}`);
       const itemMoment = moment(content.date).tz("Asia/Karachi");
       let isUnlocked = false;
 
