@@ -16,7 +16,9 @@ const userSchema = new mongoose.Schema({
     enum: ["pending", "approved", "blocked", "suspended"],
     default: "pending"
   },
-
+  gender: { type: String, enum: ['male', 'female', 'other'] },
+  dateOfBirth: { type: Date },
+  profilePicture: { type: String ,default: null},
   isEmailVerified: { type: Boolean, default: false },
   isPhoneVerified: { type: Boolean, default: false },
   phoneOTP: { type: String },

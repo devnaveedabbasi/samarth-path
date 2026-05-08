@@ -6,6 +6,7 @@ import User from '../models/User.model.js';
 import Subscription from '../models/Subscription.model.js';
 import { ApiError } from '../utils/errorHandler.js';
 import { ApiResponse } from '../utils/apiResponse.js';
+import Like from '../models/Like.model.js';
 
 export async function bookmarkContent(req, res) {
   const userId = req.user._id;
@@ -94,6 +95,10 @@ export async function getBookmarks(req, res) {
   })
     .sort({ createdAt: -1 })
     .lean();
+const likedBookmarkedContentIds = await Like.find({ userId, contentId: { $in: bookmarkedIds } }).distinct('contentId');
+const likedBookmarkedContentSet = new Set((likedBookmarkedContentIds || []).map(id => id.toString()));
+console.log('Liked Bookmarked Content IDs:', likedBookmarkedContentIds);
+
 
   const formattedContent = bookmarkedContent.map((content) => {
     let base = {
@@ -105,6 +110,7 @@ export async function getBookmarks(req, res) {
       createdBy: content.createdBy,
       isActive: content.isActive,
       likesCount: content.likesCount,
+      isliked: likedBookmarkedContentSet.has(String(content._id)),
       commentsCount: content.commentsCount,
       bookmarksCount: content.bookmarksCount,
       createdAt: content.createdAt,

@@ -6,6 +6,7 @@ import { signToken } from '../../utils/jwt.js';
 import { generateNumericOtp } from '../../utils/otp.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
+import { uploadOnCloudinary } from '../../utils/cloudinary.js';
 
 const SALT_ROUNDS = 10;
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -424,6 +425,78 @@ export async function changePassword(req, res) {
 
   res.status(200).json(
     new ApiResponse(200, {}, 'Password changed successfully.')
+  );
+}
+
+
+
+export async function updateProfile(req, res) {
+  const userId = req.user._id;
+  const { name, gender, dateOfBirth } = req.body
+
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new ApiError(404, 'User not found.');
+  }
+  const updatedFields = {};
+
+  if (typeof name === 'string' && name.trim() && name.trim() !== user.name) {
+    user.name = String(name).trim();
+    updatedFields.name = user.name;
+  }
+
+  if (gender) {
+    const allowedGenders = ['male', 'female', 'other'];
+    if (!allowedGenders.includes(gender)) {
+      throw new ApiError(400, 'Invalid gender value.');
+    }
+    if (gender !== user.gender) {
+      user.gender = gender;
+      updatedFields.gender = user.gender;
+    }
+  }
+
+  if (dateOfBirth) {
+    const dob = new Date(dateOfBirth);
+    if (isNaN(dob.getTime())) {
+      throw new ApiError(400, 'Invalid dateOfBirth value.');
+    }
+    const existingDob = user.dateOfBirth ? new Date(user.dateOfBirth) : null;
+    if (!existingDob || dob.getTime() !== existingDob.getTime()) {
+      user.dateOfBirth = dob;
+      updatedFields.dateOfBirth = user.dateOfBirth;
+    }
+  }
+
+  if (req.file) {
+    const localPath = req.file.path || req.file.tempFilePath || null;
+    if (localPath) {
+      const uploadRes = await uploadOnCloudinary(localPath);
+      if (uploadRes && uploadRes.secure_url) {
+        user.profilePicture = uploadRes.secure_url;
+        updatedFields.profilePicture = user.profilePicture;
+      }
+    }
+  }
+
+  if (Object.keys(updatedFields).length === 0) {
+    throw new ApiError(400, 'No fields were updated.');
+  }
+
+  await user.save();
+
+  res.status(200).json(
+    new ApiResponse(200, updatedFields, 'Profile updated successfully.')
+  );
+}
+
+export async function logout(req, res) {
+  const userId = req.user._id;
+  await User.findByIdAndUpdate(userId, { fcmToken: null });
+
+  res.status(200).json(
+    new ApiResponse(200, {}, 'Logged out successfully.')
   );
 }
 

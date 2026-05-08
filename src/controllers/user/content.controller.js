@@ -19,7 +19,7 @@ export async function getContent(req, res) {
 
   const now = moment().tz("Asia/Karachi");
   const todayEnd = now.clone().endOf('day').toDate();
-  const sevenDaysAgoStart = now.clone().subtract(6, 'days').startOf('day').toDate();
+  const sevenDaysAgoStart = now.clone().subtract(99, 'days').startOf('day').toDate();
 
   const contentList = await Content.find({
     date: { $gte: sevenDaysAgoStart, $lte: todayEnd },

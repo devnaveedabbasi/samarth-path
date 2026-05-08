@@ -23,5 +23,6 @@ const bookmarkSchema = new mongoose.Schema({
 // Ensure one bookmark per user per content
 bookmarkSchema.index({ userId: 1, contentId: 1 }, { unique: true });
 
-const Bookmark = mongoose.models.Bookmark || mongoose.model('Bookmark', bookmarkSchema);
+const 
+Bookmark = mongoose.models.Bookmark || mongoose.model('Bookmark', bookmarkSchema);
 export default Bookmark;
