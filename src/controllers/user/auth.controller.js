@@ -6,7 +6,7 @@ import { signToken } from '../../utils/jwt.js';
 import { generateNumericOtp } from '../../utils/otp.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
-import { uploadOnCloudinary } from '../../utils/cloudinary.js';
+import { uploadOnS3 } from '../../utils/s3.js';
 
 const SALT_ROUNDS = 10;
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -32,19 +32,28 @@ async function setPhoneOtp(user, otpPlain) {
   user.otpAttempts = 0;
   await user.save();
 }
-
+function normalizePhone(phone) {
+  return phone.replace(/^\+91|^91|^0/, "");
+}
+export function isValidIndianPhone(phone) {
+  const cleaned = normalizePhone(phone);
+  return /^(?:91|0)?[6-9]\d{9}$/.test(cleaned);
+}
 export async function register(req, res) {
   const name = String(req.body.name || '').trim();
-  const phone = String(req.body.phone || '').trim();
+  let phone = String(req.body.phone || '').trim(); 
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
   if (!name || !phone || !email || !password) {
     throw new ApiError(400, 'Name, phone, email, and password are required.');
   }
+  if (!isValidIndianPhone(phone)) {
+    throw new ApiError(400, 'Invalid phone number format. Must be a valid Indian mobile number.');
+  }
 
-  
-
+  phone = normalizePhone(phone); // ✅ now works fine
+  console.log("Normalized phone:", phone);
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     throw new ApiError(400, 'Invalid email format.');
@@ -64,6 +73,7 @@ export async function register(req, res) {
     throw new ApiError(408, 'Email already registered.');
   }
 
+  
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
   const otp = generateNumericOtp(6);
 
@@ -92,7 +102,7 @@ export async function register(req, res) {
   user.subscriptionID = subscription._id;
   await user.save();
 
-  await sendOtpSms(phone, otp);
+  // await sendOtpSms(phone, otp);
 
   res.status(201).json(
     new ApiResponse(
@@ -469,17 +479,21 @@ export async function updateProfile(req, res) {
     }
   }
 
-  if (req.file) {
-    const localPath = req.file.path || req.file.tempFilePath || null;
-    if (localPath) {
-      const uploadRes = await uploadOnCloudinary(localPath);
-      if (uploadRes && uploadRes.secure_url) {
-        user.profilePicture = uploadRes.secure_url;
-        updatedFields.profilePicture = user.profilePicture;
-      }
+if (req.file) {
+  const localPath = req.file.path || req.file.tempFilePath || null;
+
+  if (localPath) {
+    const uploadRes = await uploadOnS3(
+      localPath,
+      req.file.originalname
+    );
+
+    if (uploadRes && uploadRes.secure_url) {
+      user.profilePicture = uploadRes.secure_url;
+      updatedFields.profilePicture = user.profilePicture;
     }
   }
-
+}
   if (Object.keys(updatedFields).length === 0) {
     throw new ApiError(400, 'No fields were updated.');
   }
@@ -518,6 +532,9 @@ export async function me(req, res) {
         role: user.role,
         phone: user.phone,
         status: user.status,
+        profilePicture: user.profilePicture,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
         isSubscribed: user.isSubscribed,
         subscription: subscription ? {
           status: subscription.status,

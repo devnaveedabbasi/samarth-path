@@ -110,7 +110,7 @@ console.log('Liked Bookmarked Content IDs:', likedBookmarkedContentIds);
       createdBy: content.createdBy,
       isActive: content.isActive,
       likesCount: content.likesCount,
-      isliked: likedBookmarkedContentSet.has(String(content._id)),
+      isLiked: likedBookmarkedContentSet.has(String(content._id)),
       commentsCount: content.commentsCount,
       bookmarksCount: content.bookmarksCount,
       createdAt: content.createdAt,

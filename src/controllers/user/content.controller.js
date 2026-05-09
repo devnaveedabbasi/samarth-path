@@ -18,89 +18,63 @@ export async function getContent(req, res) {
   const userId = req.user._id;
 
   const now = moment().tz("Asia/Karachi");
-  const todayEnd = now.clone().endOf('day').toDate();
-  const sevenDaysAgoStart = now.clone().subtract(99, 'days').startOf('day').toDate();
+
+  const startOfDay = now.clone().startOf('day').toDate();
+  const endOfDay = now.clone().endOf('day').toDate();
 
   const contentList = await Content.find({
-    date: { $gte: sevenDaysAgoStart, $lte: todayEnd },
+    date: { $gte: startOfDay, $lte: endOfDay },
     isActive: true
-  }).sort({ date: -1 }).select('-quizContent.correctOptionId'); 
+  }).sort({ unlocksAt: 1 });
 
-  if (!contentList || contentList.length === 0) {
-    throw new ApiError(404, 'No content available for the past 7 days.');
+  if (!contentList.length) {
+    return res.status(200).json(
+      new ApiResponse(200, [], "No content for today")
+    );
   }
 
   const enrichedContent = await Promise.all(
     contentList.map(async (content) => {
       const userLike = await Like.findOne({ userId, contentId: content._id });
-      // const isArchived = await Archive.findOne({ userId, contentId: content._id });
       const isBookmarked = await Bookmark.findOne({ userId, contentId: content._id });
-console.log(`Processing content ID: ${content._id}, Date: ${content.date}, Unlocks At: ${content.unlocksAt}`);
-      const itemMoment = moment(content.date).tz("Asia/Karachi");
-      let isUnlocked = false;
+      const quizAttempt = await QuizAttempt.findOne({ userId, contentId: content._id });
 
-      // 1. Past dates check
-      if (itemMoment.isBefore(now, 'day')) {
-        isUnlocked = true;
-      } 
-      // 2. Today's check (Handling dot/colon in time)
-      else if (itemMoment.isSame(now, 'day')) {
-        const cleanUnlockTime = content.unlocksAt.replace('.', ':');
-        const [hours, minutes] = cleanUnlockTime.split(':');
-        const unlockMoment = now.clone().set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 });
-        
-        isUnlocked = now.isSameOrAfter(unlockMoment);
-      }
-
-      const priority = content.contentType === 'text' ? 1 : content.contentType === 'quiz' ? 2 : 3;
+      const isUnlocked = true; // optional: remove time logic if not needed
 
       return {
         _id: content._id,
-        date: content.date,
         contentType: content.contentType,
         unlocksAt: content.unlocksAt,
+        date: content.date,
+
         isUnlocked,
         isLiked: !!userLike,
-        // isArchived: !!isArchived,
         isBookmarked: !!isBookmarked,
-        likesCount: content.likesCount || 0,
-        commentsCount: content.commentsCount || 0,
-        priority,
-        ...(isUnlocked && content.contentType === 'text' && { textContent: content.textContent }),
-        ...(isUnlocked && content.contentType === 'quiz' && { quizContent: content.quizContent }),
-        ...(isUnlocked && content.contentType === 'video' && { videoContent: content.videoContent })
+
+        ...(content.contentType === "text" && {
+          textContent: content.textContent,
+        }),
+
+        ...(content.contentType === "quiz" && {
+          quizContent: content.quizContent,
+          quizAttempt: quizAttempt
+            ? {
+                selectedOptionId: quizAttempt.selectedOptionId,
+                isCorrect: quizAttempt.isCorrect,
+                timeTakenSeconds: quizAttempt.timeTakenSeconds,
+              }
+            : null,
+        }),
+
+        ...(content.contentType === "video" && {
+          videoContent: content.videoContent,
+        }),
       };
     })
   );
 
-  // --- THE CRITICAL FIX: Filter out locked content for TODAY ---
-  const onlyUnlockedContent = enrichedContent.filter(item => item.isUnlocked === true);
-
-  if (onlyUnlockedContent.length === 0) {
-     return res.status(200).json(new ApiResponse(200, [], 'No unlocked content available yet.'));
-  }
-
-  const groupedData = onlyUnlockedContent.reduce((acc, item) => {
-    const dateKey = moment(item.date).tz("Asia/Karachi").format('YYYY-MM-DD');
-    if (!acc[dateKey]) {
-      acc[dateKey] = {
-        displayDate: moment(item.date).tz("Asia/Karachi").format('dddd, MMM Do'),
-        items: []
-      };
-    }
-    acc[dateKey].items.push(item);
-    return acc;
-  }, {});
-
-  const finalResponse = Object.values(groupedData).map(dayGroup => {
-    return {
-      day: dayGroup.displayDate,
-      content: dayGroup.items.sort((a, b) => a.priority - b.priority)
-    };
-  });
-
-  res.status(200).json(
-    new ApiResponse(200, finalResponse, 'Content retrieved successfully.')
+  return res.status(200).json(
+    new ApiResponse(200, enrichedContent, "Today's content only")
   );
 }
 
@@ -122,9 +96,9 @@ export const submitQuizAnswer = async (req, res) => {
   const isCorrect = quiz.quizContent.correctOptionId === selectedOptionId;
 
   const now = moment();
-  const weekNumber = now.isoWeek(); 
-  const year = now.year();          
-  const dayNumber = now.day();      
+  const weekNumber = now.isoWeek();
+  const year = now.year();
+  const dayNumber = now.day();
 
   const attempt = await QuizAttempt.create({
     userId,
@@ -443,7 +417,7 @@ export const getWeeklyWinnersAndPrize = async (req, res) => {
       }
     },
     {
-      $sort: { 
+      $sort: {
         totalScore: -1, // Pehle zyada score wale
         totalTime: 1    // Phir kam time wale (fastest)
       }

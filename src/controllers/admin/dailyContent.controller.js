@@ -9,8 +9,8 @@ import moment from 'moment-timezone';
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
-import { uploadOnCloudinary } from '../../utils/cloudinary.js';
 import fs from "fs";
+import { uploadOnS3 } from '../../utils/s3.js';
 
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -34,10 +34,10 @@ function getWeekNumber(date) {
 
 export async function createTextContent(req, res) {
   const adminId = req.user._id;
-  const { title, description, label, image, scheduledDate, unlocksAt } = req.body;
+  const { title, description, label, scheduledDate, unlocksAt } = req.body;
 
-  if (!title || !description || !label || !image) {
-    throw new ApiError(400, 'Title, description, label, and image are required.');
+  if (!title || !description || !label) {
+    throw new ApiError(400, 'Title, description, and label are required.');
   }
 
   // Range create karein: Aaj ki subha 00:00 se raat 23:59 tak (Pakistan Time)
@@ -57,6 +57,14 @@ export async function createTextContent(req, res) {
     throw new ApiError(400, `Text content for this date already exists.`);
   }
 
+  const imageUrl = req.file ? req.file.path : null; 
+  const image = imageUrl ? await uploadOnS3({
+    localFilePath: imageUrl,
+    mimetype: req.file.mimetype,
+    folder: "text-content-images",
+    originalname: req.file.originalname,
+  }) : null;
+
   // 2. Create Content
   const content = await Content.create({
     contentType: 'text',
@@ -64,7 +72,7 @@ export async function createTextContent(req, res) {
     // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
     // Is se date ke piche janay ka chance khatam ho jata hai
     date: moment(startOfDay).add(12, 'hours').toDate(),
-    textContent: { title, description, label, image },
+    textContent: { title, description, label, image: image ? image.secure_url : null },
     createdBy: adminId
   });
 
@@ -167,20 +175,42 @@ export async function getContentById(req, res) {
 }
 
 export async function updateTextContent(req, res) {
-  const { title, description, label, image, unlocksAt } = req.body;
+  const { title, description, label, unlocksAt } = req.body;
   const { contentId } = req.params;
 
   if (!contentId) {
-    throw new ApiError(400, 'Content ID is required.');
+    throw new ApiError(400, "Content ID is required.");
+  }
+
+  const content = await Content.findById(contentId);
+
+  if (!content) {
+    throw new ApiError(404, "Content not found.");
   }
 
   const updateData = {};
 
-  if (title) updateData['textContent.title'] = title;
-  if (description) updateData['textContent.description'] = description;
-  if (label) updateData['textContent.label'] = label;
-  if (image) updateData['textContent.image'] = image;
+  if (title) updateData["textContent.title"] = title;
+  if (description) updateData["textContent.description"] = description;
+  if (label) updateData["textContent.label"] = label;
   if (unlocksAt) updateData.unlocksAt = unlocksAt;
+
+ 
+  if (req.file) {
+    const upload = await uploadOnS3({
+      localFilePath: req.file.path,
+      mimetype: req.file.mimetype,
+      folder: "text-content-images",
+      originalname: req.file.originalname,
+    });
+
+    if (!upload) {
+      throw new ApiError(500, "Image upload failed.");
+    }
+
+    updateData["textContent.image"] = upload.secure_url;
+  }
+
 
   const updatedContent = await Content.findByIdAndUpdate(
     contentId,
@@ -189,11 +219,15 @@ export async function updateTextContent(req, res) {
   );
 
   if (!updatedContent) {
-    throw new ApiError(404, 'Content not found or update failed.');
+    throw new ApiError(404, "Content not found or update failed.");
   }
 
-  res.status(200).json(
-    new ApiResponse(200, updatedContent, 'Text content updated successfully.')
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      updatedContent,
+      "Text content updated successfully."
+    )
   );
 }
 
@@ -510,13 +544,23 @@ export async function createVideoContent(req, res) {
   }
 
   try {
-    const videoUpload = await uploadOnCloudinary(videoLocalPath);
-    const thumbnailUpload = await uploadOnCloudinary(thumbnailLocalPath);
+    const videoUpload = await uploadOnS3({
+      localFilePath: videoLocalPath,
+      mimetype: req.files?.video?.[0]?.mimetype,
+      folder: "videos",
+      originalname: req.files?.video?.[0]?.originalname,
+    });
 
+    const thumbnailUpload = await uploadOnS3({
+      localFilePath: thumbnailLocalPath,
+      mimetype: req.files?.image?.[0]?.mimetype,
+      folder: "thumbnails",
+      originalname: req.files?.image?.[0]?.originalname,
+    });
     if (!videoUpload || !thumbnailUpload) {
-      throw new ApiError(500, "Failed to upload files to Cloudinary.");
+      throw new ApiError(500, "Failed to upload files to S3.");
     }
-
+    console.log("Video uploaded to S3:", videoUpload);
     const content = await Content.create({
       contentType: "video",
       unlocksAt,
@@ -607,7 +651,7 @@ export async function getVideoById(req, res) {
 
 export async function updateVideoContent(req, res) {
   const { contentId: id } = req.params;
-  
+
   // 1. Body safety check (req.body agar undefined ho)
   const { title, description, unlocksAt, date, hasListenOnlyMode } = req.body || {};
 
@@ -663,16 +707,35 @@ export async function updateVideoContent(req, res) {
     }
   }
 
-  // 6. Cloudinary Uploads
   let videoUrl = content.videoContent.videoUrl;
   let thumbnailUrl = content.videoContent.thumbnail;
-
   if (videoLocalPath) {
-    const videoUpload = await uploadOnCloudinary(videoLocalPath);
+    const videoUpload = await uploadOnS3({
+      localFilePath: videoLocalPath,
+      mimetype: req.files?.video?.[0]?.mimetype,
+      folder: "videos",
+      originalname: req.files?.video?.[0]?.originalname,
+    });
+
+    if (!videoUpload) {
+      throw new ApiError(500, "Failed to upload video to AWS S3.");
+    }
+
     videoUrl = videoUpload.secure_url;
   }
+
   if (thumbnailLocalPath) {
-    const thumbnailUpload = await uploadOnCloudinary(thumbnailLocalPath);
+    const thumbnailUpload = await uploadOnS3({
+      localFilePath: thumbnailLocalPath,
+      mimetype: req.files?.image?.[0]?.mimetype,
+      folder: "thumbnails",
+      originalname: req.files?.image?.[0]?.originalname,
+    });
+
+    if (!thumbnailUpload) {
+      throw new ApiError(500, "Failed to upload thumbnail to AWS S3.");
+    }
+
     thumbnailUrl = thumbnailUpload.secure_url;
   }
 
@@ -690,8 +753,8 @@ export async function updateVideoContent(req, res) {
           thumbnail: thumbnailUrl,
           durationSeconds: Math.round(durationSeconds),
           isAutoMute: true,
-          hasListenOnlyMode: hasListenOnlyMode !== undefined 
-            ? (hasListenOnlyMode === "true" || hasListenOnlyMode === true) 
+          hasListenOnlyMode: hasListenOnlyMode !== undefined
+            ? (hasListenOnlyMode === "true" || hasListenOnlyMode === true)
             : content.videoContent.hasListenOnlyMode,
         },
       },

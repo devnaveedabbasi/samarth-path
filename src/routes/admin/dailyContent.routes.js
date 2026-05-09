@@ -11,10 +11,10 @@ router.use(authenticateToken);
 router.use(requireRole('admin'));
 
 // TEXT ROUTES
-router.post('/text', asyncHandler(adminDailyContentController.createTextContent));
+router.post('/text', upload.single('image'), asyncHandler(adminDailyContentController.createTextContent));
 router.get('/text', asyncHandler(adminDailyContentController.getTextContent));
 router.get('/text/:id', asyncHandler(adminDailyContentController.getContentById));
-router.put('/text/:contentId', asyncHandler(adminDailyContentController.updateTextContent));
+router.put('/text/:contentId', upload.single('image'), asyncHandler(adminDailyContentController.updateTextContent));
 router.delete('/text/:contentId', asyncHandler(adminDailyContentController.deleteTextContent));
 
 

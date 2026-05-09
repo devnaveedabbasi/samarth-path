@@ -20,7 +20,7 @@ function getWeekNumber(date) {
 export async function submitQuizAnswer(req, res) {
   const userId = req.user._id;
   const { contentId, selectedOptionId, timeTakenSeconds } = req.body;
-
+  console.log('Quiz submission:', { userId, contentId, selectedOptionId, timeTakenSeconds });
   if (!contentId || !selectedOptionId) {
     throw new ApiError(400, 'Content ID and selected option are required.');
   }
