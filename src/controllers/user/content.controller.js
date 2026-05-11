@@ -24,7 +24,8 @@ export async function getContent(req, res) {
 
   const contentList = await Content.find({
     date: { $gte: startOfDay, $lte: endOfDay },
-    isActive: true
+    isActive: true,
+    isDeleted: { $ne: true }
   }).sort({ unlocksAt: 1 });
 
   if (!contentList.length) {
@@ -80,6 +81,49 @@ const commentsCount = await Comment.countDocuments({ contentId: content._id });
   return res.status(200).json(
     new ApiResponse(200, enrichedContent, "Today's content only")
   );
+}
+
+export async function getContentById(req, res) {
+  const userId = req.user._id;
+  const { contentId } = req.params;
+
+  if (!contentId) throw new ApiError(400, 'Content ID is required.');
+
+  const content = await Content.findOne({ _id: contentId, isDeleted: { $ne: true } });
+  if (!content) throw new ApiError(404, 'Content not found.');
+
+  const [userLike, isBookmarked, quizAttempt, likesCount, commentsCount] = await Promise.all([
+    Like.findOne({ userId, contentId: content._id }),
+    Bookmark.findOne({ userId, contentId: content._id }),
+    QuizAttempt.findOne({ userId, contentId: content._id }),
+    Like.countDocuments({ contentId: content._id }),
+    Comment.countDocuments({ contentId: content._id }),
+  ]);
+
+  const result = {
+    _id: content._id,
+    contentType: content.contentType,
+    unlocksAt: content.unlocksAt,
+    date: content.date,
+    isActive: content.isActive,
+    likesCount,
+    commentsCount,
+    bookmarksCount: content.bookmarksCount || 0,
+    isLiked: !!userLike,
+    isBookmarked: !!isBookmarked,
+    ...(content.contentType === 'text' && { textContent: content.textContent }),
+    ...(content.contentType === 'video' && { videoContent: content.videoContent }),
+    ...(content.contentType === 'quiz' && {
+      quizContent: content.quizContent,
+      quizAttempt: quizAttempt ? {
+        selectedOptionId: quizAttempt.selectedOptionId,
+        isCorrect: quizAttempt.isCorrect,
+        timeTakenSeconds: quizAttempt.timeTakenSeconds,
+      } : null,
+    }),
+  };
+
+  return res.status(200).json(new ApiResponse(200, result, 'Content details retrieved successfully.'));
 }
 
 export const submitQuizAnswer = async (req, res) => {
@@ -454,7 +498,5 @@ export const getWeeklyWinnersAndPrize = async (req, res) => {
     }, "Weekly winners and prize fetched successfully.")
   );
 };
-
-
 
 

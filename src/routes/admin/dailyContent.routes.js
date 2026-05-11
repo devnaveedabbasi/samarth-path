@@ -32,7 +32,7 @@ router.post("/video",  upload.fields([{ name: "video", maxCount: 1 }, { name: "i
 router.get('/video', asyncHandler(adminDailyContentController.getAllVideoContent));
 router.get('/video/:contentId', asyncHandler(adminDailyContentController.getVideoById));
 router.put('/video/:contentId', upload.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.updateVideoContent));
-// router.delete('/video/:contentId', asyncHandler(adminDailyContentController.deleteVideoContent));
+router.delete('/video/:contentId', asyncHandler(adminDailyContentController.deleteVideoContent));
 
 
 // Content management endpoints

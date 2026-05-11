@@ -63,6 +63,7 @@ const contentSchema = new mongoose.Schema({
   },
 
   isActive: { type: Boolean, default: true },
+  isDeleted: { type: Boolean, default: false },
   likesCount: { type: Number, default: 0 },
   commentsCount: { type: Number, default: 0 },
   bookmarksCount: { type: Number, default: 0 }

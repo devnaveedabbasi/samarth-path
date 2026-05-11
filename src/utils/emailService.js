@@ -14,6 +14,30 @@ const transporter = nodemailer.createTransport({
 });
 
 /**
+ * Generic email sending function
+ * @param {string} to - Recipient email
+ * @param {string} subject - Email subject
+ * @param {string} html - HTML content
+ */
+export const sendEmail = async (to, subject, html) => {
+    const mailOptions = {
+        from: `"Support Team" <${config.email.user}>`,
+        to,
+        subject,
+        html,
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`Email sent to: ${to}`);
+        return true;
+    } catch (error) {
+        console.error("Email sending failed:", error);
+        throw new Error(`Could not send email: ${error.message}`);
+    }
+};
+
+/**
  * Verification Email bhejny ka function
  * @param {string} to - User ka email
  * @param {string} token - Verification token
@@ -58,7 +82,7 @@ export const sendVerificationEmail = async (to, token) => {
  */
 export const sendOtpEmail = async (to, otp) => {
     const mailOptions = {
-        from: `"Kaj Now" <${config.email.user}>`,
+        from: `"Support Team" <${config.email.user}>`,
         to,
         subject: 'Your verification code',
         html: `

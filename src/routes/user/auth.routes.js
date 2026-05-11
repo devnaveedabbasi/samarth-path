@@ -8,7 +8,7 @@ const router = Router();
 
 router.post('/register', asyncHandler(userAuth.register));
 router.post('/verify-phone', asyncHandler(userAuth.verifyPhone));
-router.post('/verify-email', asyncHandler(userAuth.verifyPhone)); // alias for legacy clients
+router.post('/verify-email', asyncHandler(userAuth.verifyPhone)); 
 router.post('/resend-otp', asyncHandler(userAuth.resendOtp));
 router.post('/login', asyncHandler(userAuth.login));
 router.post('/forgot-password', asyncHandler(userAuth.forgotPassword));

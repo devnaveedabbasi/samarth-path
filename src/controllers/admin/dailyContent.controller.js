@@ -11,6 +11,7 @@ import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 import fs from "fs";
 import { uploadOnS3 } from '../../utils/s3.js';
+import { sendContentPublishedNotification } from '../notification.controller.js';
 
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -66,7 +67,7 @@ export async function createTextContent(req, res) {
   }) : null;
 
   // 2. Create Content
-  const content = await Content.create({
+  const content = await Content.create({ 
     contentType: 'text',
     unlocksAt: unlocksAt || '08:00',
     // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
@@ -75,6 +76,8 @@ export async function createTextContent(req, res) {
     textContent: { title, description, label, image: image ? image.secure_url : null },
     createdBy: adminId
   });
+  
+  await sendContentPublishedNotification(content);
 
   res.status(201).json(
     new ApiResponse(201, content, 'Text content scheduled successfully.')
@@ -84,16 +87,10 @@ export async function createTextContent(req, res) {
 export async function getTextContent(req, res) {
   const { date, search, status, page = 1, limit = 10 } = req.query;
 
-  let queryFilter = { contentType: 'text' };
+  let queryFilter = { contentType: 'text', isDeleted: { $ne: true } };
 
-  if (date) {
-    queryFilter.date = date;
-  }
-
-  if (status !== undefined && status !== "") {
-    queryFilter.isActive = status === "true";
-  }
-
+  if (date) { queryFilter.date = date; }
+  if (status !== undefined && status !== "") { queryFilter.isActive = status === "true"; }
   if (search) {
     queryFilter.$or = [
       { "textContent.title": { $regex: search, $options: "i" } },
@@ -104,45 +101,19 @@ export async function getTextContent(req, res) {
   try {
     if (date) {
       const content = await Content.findOne(queryFilter);
-
-      if (!content) {
-        return res.status(200).json(new ApiResponse(200, [], 'No text content found for this date.'));
-      }
-
-      return res.status(200).json(
-        new ApiResponse(200, content, 'Content retrieved successfully.')
-      );
+      if (!content) return res.status(200).json(new ApiResponse(200, [], 'No text content found for this date.'));
+      return res.status(200).json(new ApiResponse(200, content, 'Content retrieved successfully.'));
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const content = await Content.find(queryFilter)
-      .sort({ createdAt: -1 }) // Latest content pehle
-      .skip(skip)
-      .limit(parseInt(limit));
-
+    const content = await Content.find(queryFilter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
     const totalItems = await Content.countDocuments(queryFilter);
 
     if (!content || content.length === 0) {
       return res.status(200).json(new ApiResponse(200, [], 'No text content found.'));
     }
 
-    // Response mein data aur pagination details dono bhej rahe hain
-    res.status(200).json(
-      new ApiResponse(
-        200,
-        {
-          content,
-          pagination: {
-            totalItems,
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(totalItems / limit)
-          }
-        },
-        'Content retrieved successfully.'
-      )
-    );
-
+    res.status(200).json(new ApiResponse(200, { content, pagination: { totalItems, currentPage: parseInt(page), totalPages: Math.ceil(totalItems / limit) } }, 'Content retrieved successfully.'));
   } catch (error) {
     res.status(500).json(new ApiResponse(500, null, error.message));
   }
@@ -233,21 +204,16 @@ export async function updateTextContent(req, res) {
 
 export async function deleteTextContent(req, res) {
   const { contentId } = req.params;
+  if (!contentId) throw new ApiError(400, 'Content ID is required.');
 
-  if (!contentId) {
-    throw new ApiError(400, 'Content ID is required.');
-  }
-
-  const deletedContent = await Content.findByIdAndDelete(contentId);
-
-  if (!deletedContent) {
-    throw new ApiError(404, 'Content not found. It might have been already deleted.');
-  }
-
-  // 4. Success Response
-  res.status(200).json(
-    new ApiResponse(200, null, 'Text content deleted successfully.')
+  const content = await Content.findOneAndUpdate(
+    { _id: contentId, contentType: 'text' },
+    { $set: { isDeleted: true } },
+    { new: true }
   );
+  if (!content) throw new ApiError(404, 'Content not found.');
+
+  res.status(200).json(new ApiResponse(200, null, 'Text content deleted successfully.'));
 }
 
 
@@ -307,6 +273,9 @@ export async function createQuizContent(req, res) {
     createdBy: adminId
   });
 
+  // Send notification to all users about new quiz
+  await sendContentPublishedNotification(content, adminId);
+
   res.status(201).json(
     new ApiResponse(201, content, 'Quiz with 4 options created successfully.')
   );
@@ -335,42 +304,19 @@ export async function getQuizById(req, res) {
 }
 
 export async function getQuizzes(req, res) {
-  // 1. Pagination aur Filters (Optional but good for Admin)
   const { page = 1, limit = 10, search } = req.query;
 
-  const query = { contentType: 'quiz' };
+  const query = { contentType: 'quiz', isDeleted: { $ne: true } };
+  if (search) { query['quizContent.question'] = { $regex: search, $options: 'i' }; }
 
-  if (search) {
-    query['quizContent.question'] = { $regex: search, $options: 'i' };
-  }
-
-  const quizzes = await Content.find(query)
-    .sort({ date: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit);
-
-  // 3. Count total (Pagination ke liye)
+  const quizzes = await Content.find(query).sort({ date: -1 }).limit(limit * 1).skip((page - 1) * limit);
   const total = await Content.countDocuments(query);
 
-  // 4. Response handling
   if (!quizzes || quizzes.length === 0) {
-    return res.status(200).json(
-      new ApiResponse(200, [], 'No quizzes found in records.')
-    );
+    return res.status(200).json(new ApiResponse(200, [], 'No quizzes found in records.'));
   }
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        quizzes,
-        totalPages: Math.ceil(total / limit),
-        currentPage: page,
-        totalQuizzes: total
-      },
-      'Admin quizzes retrieved successfully.'
-    )
-  );
+  res.status(200).json(new ApiResponse(200, { quizzes, totalPages: Math.ceil(total / limit), currentPage: page, totalQuizzes: total }, 'Admin quizzes retrieved successfully.'));
 }
 
 
@@ -424,24 +370,16 @@ export async function updateQuizContent(req, res) {
 
 export async function deleteQuizContent(req, res) {
   const { contentId } = req.params;
+  if (!contentId) throw new ApiError(400, 'Content ID is required.');
 
-  if (!contentId) {
-    throw new ApiError(400, 'Content ID is required.');
-  }
-
-  const deletedQuiz = await Content.findOneAndDelete({
-    _id: contentId,
-    contentType: 'quiz'
-  });
-
-  if (!deletedQuiz) {
-    throw new ApiError(404, 'Quiz not found or already deleted.');
-  }
-
-
-  res.status(200).json(
-    new ApiResponse(200, null, 'Quiz and its related data deleted successfully.')
+  const deleted = await Content.findOneAndUpdate(
+    { _id: contentId, contentType: 'quiz' },
+    { $set: { isDeleted: true } },
+    { new: true }
   );
+  if (!deleted) throw new ApiError(404, 'Quiz not found or already deleted.');
+
+  res.status(200).json(new ApiResponse(200, null, 'Quiz deleted successfully.'));
 }
 
 
@@ -577,6 +515,9 @@ export async function createVideoContent(req, res) {
       createdBy: adminId,
     });
 
+    // Send notification to all users about new video
+    await sendContentPublishedNotification(content, adminId);
+
     return res.status(201).json(
       new ApiResponse(201, content, "Video content created and uploaded successfully!")
     );
@@ -589,41 +530,16 @@ export async function createVideoContent(req, res) {
 }
 
 export async function getAllVideoContent(req, res) {
-  // 1. Query parameters se page aur limit nikalna
-  const page = parseInt(req.query.page) || 1; // Default page 1
-  const limit = parseInt(req.query.limit) || 10; // Ek page par 10 videos
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
   const skip = (page - 1) * limit;
 
-  // 2. Total videos count karna (Pagination metadata ke liye)
-  const totalVideos = await Content.countDocuments({ contentType: 'video' });
-
-  // 3. Videos fetch karna pagination ke saath
-  const videos = await Content.find({ contentType: 'video' })
-    .sort({ date: -1 }) // Newest first
-    .skip(skip)
-    .limit(limit)
-    .populate('createdBy', 'name email'); // Optional: creator details dikhane ke liye
-
-  // 4. Metadata calculate karna
+  const filter = { contentType: 'video', isDeleted: { $ne: true } };
+  const totalVideos = await Content.countDocuments(filter);
+  const videos = await Content.find(filter).sort({ date: -1 }).skip(skip).limit(limit).populate('createdBy', 'name email');
   const totalPages = Math.ceil(totalVideos / limit);
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        videos,
-        pagination: {
-          totalVideos,
-          totalPages,
-          currentPage: page,
-          pageSize: limit,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1
-        }
-      },
-      'Video content fetched successfully with pagination.'
-    )
-  );
+  res.status(200).json(new ApiResponse(200, { videos, pagination: { totalVideos, totalPages, currentPage: page, pageSize: limit, hasNextPage: page < totalPages, hasPrevPage: page > 1 } }, 'Video content fetched successfully with pagination.'));
 }
 
 
@@ -767,6 +683,19 @@ export async function updateVideoContent(req, res) {
   );
 }
 
+export async function deleteVideoContent(req, res) {
+  const { contentId } = req.params;
+  if (!contentId) throw new ApiError(400, 'Content ID is required.');
+
+  const deleted = await Content.findOneAndUpdate(
+    { _id: contentId, contentType: 'video' },
+    { $set: { isDeleted: true } },
+    { new: true }
+  );
+  if (!deleted) throw new ApiError(404, 'Video content not found or already deleted.');
+
+  res.status(200).json(new ApiResponse(200, null, 'Video content deleted successfully.'));
+}
 
 
 

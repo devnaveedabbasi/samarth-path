@@ -1,4 +1,4 @@
-import admin from "../config/firebase";
+import admin from "../config/firebase.js";
 
 
 const sendNotification = async ({

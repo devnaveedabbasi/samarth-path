@@ -481,12 +481,12 @@ export async function updateProfile(req, res) {
 
 if (req.file) {
   const localPath = req.file.path || req.file.tempFilePath || null;
-
   if (localPath) {
-    const uploadRes = await uploadOnS3(
-      localPath,
-      req.file.originalname
-    );
+    const uploadRes = await uploadOnS3({
+      localFilePath: localPath,
+      mimetype: req.file.mimetype,
+      originalname: req.file.originalname,
+    });
 
     if (uploadRes && uploadRes.secure_url) {
       user.profilePicture = uploadRes.secure_url;
@@ -494,6 +494,8 @@ if (req.file) {
     }
   }
 }
+
+
   if (Object.keys(updatedFields).length === 0) {
     throw new ApiError(400, 'No fields were updated.');
   }

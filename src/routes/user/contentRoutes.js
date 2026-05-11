@@ -14,6 +14,7 @@ router.use(requireRole('user'));
 router.use(checkSubscription);
 
 router.get('/', asyncHandler(dailyContentController.getContent));
+router.get('/:contentId', asyncHandler(dailyContentController.getContentById));
 
 
 router.post('/quiz/submit', asyncHandler(quizAndWinnersController.submitQuizAnswer));

@@ -4,6 +4,9 @@ import { authMiddleware as authenticateToken } from '../../middleware/auth.js';
 import authRoute from './auth.routes.js';
 import subscriptionRoute from './subscription.routes.js';
 import contentRoutes from './contentRoutes.js';
+import winnersRoutes from './winners.routes.js';
+import archiveRoutes from './archive.routes.js';
+import notificationRoutes from './notification.routes.js';
 import User from '../../models/User.model.js';
 
 
@@ -44,5 +47,8 @@ router.post("/save-fcm-token", authenticateToken, saveFcmToken);
 router.use('/auth', authRoute);
 router.use('/subscription', subscriptionRoute);
 router.use('/content', contentRoutes);
+router.use('/winners', winnersRoutes);
+router.use('/archive', archiveRoutes);
+router.use('/notifications', notificationRoutes);
 
 export default router;
