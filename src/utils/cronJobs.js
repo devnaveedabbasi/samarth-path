@@ -1,101 +1,109 @@
 import cron from 'node-cron';
 import moment from 'moment-timezone';
 import Content from '../models/Content.model.js';
-import { WinnerService } from '../services/winner.service.js';
+import  WinnerService  from '../services/winner.service.js';
 import NotificationService from '../services/notification.service.js';
-import ArchiveService from '../services/archive.service.js';
+import { TIMEZONE, CONTENT_UNLOCK_TIMES } from '../utils/date.util.js';
 
 let isProcessing = false;
 
 /**
  * Cron: Content Unlock Job
- * Runs every minute to check and notify users about newly available content
+ * Har minute chalta hai — unlocksAt time par content unlock karta hai aur notification bhejta hai
  */
 cron.schedule('* * * * *', async () => {
-  console.log('[CRON] Checking for content to unlock...');
-
   if (isProcessing) return;
-
   isProcessing = true;
-  const now = moment().tz("Asia/Karachi");
-  const currentTime = now.format("HH:mm");
-  const startOfDay = now.clone().startOf('day').toDate();
-  const endOfDay = now.clone().endOf('day').toDate();
 
   try {
-    const pendingContent = await Content.find({
-      date: { $gte: startOfDay, $lte: endOfDay },
-      unlocksAt: { $lte: currentTime },
-      isNotified: false,
-      isActive: true
-    });
+    const now = moment().tz(TIMEZONE);
+    const currentTime = now.format('HH:mm');
+    const startOfDay = now.clone().startOf('day').toDate();
+    const endOfDay = now.clone().endOf('day').toDate();
 
-    if (pendingContent.length > 0) {
-      for (const content of pendingContent) {
-        try {
-          console.log(`[SUCCESS] Unlocking ${content.contentType}: ${content.textContent?.title || content.quizContent?.title || content.videoContent?.title}`);
+    // Sirf woh content types jinka unlock time abhi match karta hai
+    const typesToUnlock = Object.entries(CONTENT_UNLOCK_TIMES)
+      .filter(([_, time]) => time === currentTime)
+      .map(([type]) => type);
 
-          // Mark as notified
-          content.isNotified = true;
-          await content.save();
+    if (!typesToUnlock.length) return;
 
-          // Archive content for date-based retrieval
-          await ArchiveService.archiveContent(content._id);
+    console.log(`[CRON] ${currentTime} PKT — unlocking: ${typesToUnlock.join(', ')}`);
 
-          // Send notification to users about new content
+    for (const contentType of typesToUnlock) {
+      try {
+        // isActive: false wala content dhundo aur unlock karo
+        const content = await Content.findOneAndUpdate(
+          {
+            contentType,
+            date: { $gte: startOfDay, $lte: endOfDay },
+            isActive: false,
+            isNotified: false,
+            isDeleted: { $ne: true }
+          },
+          { $set: { isActive: true, isNotified: true } },
+          { new: true }
+        );
+
+        if (content) {
+          const title =
+            content.textContent?.title ||
+            content.quizContent?.title ||
+            content.videoContent?.title ||
+            'Untitled';
+
+          console.log(`[CRON]  Unlocked ${contentType}: "${title}"`);
+
           await NotificationService.sendContentPublishedNotification(content, content.createdBy);
-        } catch (error) {
-          console.error(`[ERROR] Failed to unlock content ${content._id}:`, error);
         }
+      } catch (error) {
+        console.error(`[CRON]  Failed to unlock ${contentType}:`, error.message);
       }
     }
   } catch (error) {
-    console.error("[CRON ERROR] Content unlock:", error);
+    console.error('[CRON ERROR] Content unlock job:', error.message);
   } finally {
     isProcessing = false;
   }
 }, {
   scheduled: true,
-  timezone: "Asia/Karachi"
+  timezone: TIMEZONE
 });
 
 /**
  * Cron: Weekly Winner Announcement
- * Runs every Sunday at 12:00 AM (Karachi Time)
- * Announces winners from the previous week, sends notifications and emails
+ * Har Sunday 12:00 AM (PKT) — previous week ke winners announce karta hai
  */
 cron.schedule('0 0 * * 0', async () => {
   console.log('[CRON] Running Weekly Winner Announcement...');
 
   try {
     const result = await WinnerService.announceWeeklyWinners();
-    console.log('[CRON SUCCESS]', result);
+    console.log('[CRON SUCCESS] Weekly winners announced:', result);
   } catch (error) {
-    console.error('[CRON ERROR] Weekly winner announcement:', error);
+    console.error('[CRON ERROR] Weekly winner announcement:', error.message);
   }
 }, {
   scheduled: true,
-  timezone: "Asia/Karachi"
+  timezone: TIMEZONE
 });
 
 /**
- * Cron: Archive Cleanup
- * Runs every Sunday at 2:00 AM (Karachi Time)
- * Cleans up old archive entries (older than 6 months)
+ * Cron: Old Notifications Cleanup
+ * Har Sunday 2:00 AM (PKT) — 30 din purani notifications delete karta hai
  */
 cron.schedule('0 2 * * 0', async () => {
-  console.log('[CRON] Running Archive Cleanup...');
+  console.log('[CRON] Running Notifications Cleanup...');
 
   try {
-    // Delete notifications older than 30 days
     const deletedCount = await NotificationService.deleteOldNotifications(30);
     console.log(`[CRON SUCCESS] Deleted ${deletedCount} old notifications`);
   } catch (error) {
-    console.error('[CRON ERROR] Archive cleanup:', error);
+    console.error('[CRON ERROR] Notifications cleanup:', error.message);
   }
 }, {
   scheduled: true,
-  timezone: "Asia/Karachi"
+  timezone: TIMEZONE
 });
 
-console.log('[CRON] All scheduled jobs initialized');
+console.log('[CRON]  All scheduled jobs initialized');

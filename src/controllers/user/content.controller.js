@@ -2,25 +2,21 @@
 import Content from '../../models/Content.model.js';
 import Like from '../../models/Like.model.js';
 import Comment from '../../models/Comment.model.js';
-import Archive from '../../models/Archive.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import moment from 'moment-timezone';
 import QuizAttempt from '../../models/QuizAttempt.model.js';
 import mongoose from 'mongoose';
 import Bookmark from '../../models/Bookmark.model.js';
+import { getPKTDateRange } from '../../utils/date.util.js';
+import { enrichContent } from '../../utils/contentResponse.js';
 
 // Helper function to check if content is unlocked based on current time
 
 
-
 export async function getContent(req, res) {
   const userId = req.user._id;
-
-  const now = moment().tz("Asia/Karachi");
-
-  const startOfDay = now.clone().startOf('day').toDate();
-  const endOfDay = now.clone().endOf('day').toDate();
+  const { startOfDay, endOfDay } = getPKTDateRange();
 
   const contentList = await Content.find({
     date: { $gte: startOfDay, $lte: endOfDay },
@@ -29,60 +25,15 @@ export async function getContent(req, res) {
   }).sort({ unlocksAt: 1 });
 
   if (!contentList.length) {
-    return res.status(200).json(
-      new ApiResponse(200, [], "No content for today")
-    );
+    return res.status(200).json(new ApiResponse(200, [], 'No content for today'));
   }
 
   const enrichedContent = await Promise.all(
-    contentList.map(async (content) => {
-      const userLike = await Like.findOne({ userId, contentId: content._id });
-      const isBookmarked = await Bookmark.findOne({ userId, contentId: content._id });
-      const quizAttempt = await QuizAttempt.findOne({ userId, contentId: content._id });
-const likesCount = await Like.countDocuments({ contentId: content._id });
-const commentsCount = await Comment.countDocuments({ contentId: content._id });
-      const isUnlocked = true; // optional: remove time logic if not needed
-
-      return {
-        _id: content._id,
-        contentType: content.contentType,
-        unlocksAt: content.unlocksAt,
-        date: content.date,
-
-        isUnlocked,
-        likesCount,
-        commentsCount,
-
-        isLiked: !!userLike,
-        isBookmarked: !!isBookmarked,
-
-        ...(content.contentType === "text" && {
-          textContent: content.textContent,
-        }),
-
-        ...(content.contentType === "quiz" && {
-          quizContent: content.quizContent,
-          quizAttempt: quizAttempt
-            ? {
-                selectedOptionId: quizAttempt.selectedOptionId,
-                isCorrect: quizAttempt.isCorrect,
-                timeTakenSeconds: quizAttempt.timeTakenSeconds,
-              }
-            : null,
-        }),
-
-        ...(content.contentType === "video" && {
-          videoContent: content.videoContent,
-        }),
-      };
-    })
+    contentList.map(content => enrichContent(content, userId))
   );
 
-  return res.status(200).json(
-    new ApiResponse(200, enrichedContent, "Today's content only")
-  );
+  return res.status(200).json(new ApiResponse(200, enrichedContent, "Today's content"));
 }
-
 export async function getContentById(req, res) {
   const userId = req.user._id;
   const { contentId } = req.params;
@@ -325,76 +276,6 @@ export async function deleteComment(req, res) {
   );
 }
 
-export async function archiveContent(req, res) {
-  const userId = req.user._id;
-  const { contentId } = req.body;
-
-  if (!contentId) {
-    throw new ApiError(400, 'Content ID is required.');
-  }
-
-  const content = await Content.findById(contentId);
-  if (!content) {
-    throw new ApiError(404, 'Content not found.');
-  }
-
-  const existingArchive = await Archive.findOne({ userId, contentId });
-  if (existingArchive) {
-    throw new ApiError(400, 'Content is already archived.');
-  }
-
-  const archive = await Archive.create({ userId, contentId });
-
-  res.status(201).json(
-    new ApiResponse(
-      201,
-      { archiveId: archive._id },
-      'Content archived successfully.'
-    )
-  );
-}
-
-export async function unarchiveContent(req, res) {
-  const userId = req.user._id;
-  const { contentId } = req.body;
-
-  if (!contentId) {
-    throw new ApiError(400, 'Content ID is required.');
-  }
-
-  const archive = await Archive.findOne({ userId, contentId });
-  if (!archive) {
-    throw new ApiError(404, 'Content is not archived.');
-  }
-
-  await Archive.deleteOne({ _id: archive._id });
-
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      {},
-      'Content unarchived successfully.'
-    )
-  );
-}
-
-export async function getArchivedContent(req, res) {
-  const userId = req.user._id;
-
-  const archivedIds = await Archive.find({ userId }).distinct('contentId');
-
-  const archivedContent = await Content.find({ _id: { $in: archivedIds } })
-    .sort({ createdAt: -1 });
-
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      archivedContent,
-      'Archived content retrieved successfully.'
-    )
-  );
-}
-
 
 
 
@@ -500,3 +381,53 @@ export const getWeeklyWinnersAndPrize = async (req, res) => {
 };
 
 
+
+
+
+export async function getArchiveByDate(req, res) {
+  const userId = req.user._id;
+  const { date, type = 'all' } = req.query;
+
+  if (!date) {
+    throw new ApiError(400, 'Date parameter is required (format: YYYY-MM-DD)');
+  }
+
+  // Date validate karo
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ApiError(400, 'Invalid date format. Use YYYY-MM-DD');
+  }
+
+  // Type validate karo
+  const allowed = ['text', 'quiz', 'video'];
+  if (type !== 'all' && !allowed.includes(type)) {
+    throw new ApiError(400, `Invalid type. Use: ${allowed.join(', ')}, or 'all'`);
+  }
+
+  const { startOfDay, endOfDay } = getPKTDateRange(date);
+
+  const query = {
+    date: { $gte: startOfDay, $lte: endOfDay },
+    isDeleted: { $ne: true },
+    ...(type !== 'all' && { contentType: type })
+  };
+
+  const contentList = await Content.find(query).sort({ unlocksAt: 1 });
+
+  if (!contentList.length) {
+    return res.status(200).json(
+      new ApiResponse(200, { date, type, count: 0, data: [] }, `No content found for ${date}`)
+    );
+  }
+
+  const enrichedContent = await Promise.all(
+    contentList.map(content => enrichContent(content, userId))
+  );
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      { date, type, count: enrichedContent.length, data: enrichedContent },
+      `${enrichedContent.length} content found for ${date}`
+    )
+  );
+}

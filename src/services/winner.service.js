@@ -1,18 +1,14 @@
-// services/winner.service.js
-import moment from 'moment';
 import QuizAttempt from '../models/QuizAttempt.model.js';
 import Winner from '../models/Winner.model.js';
 import User from '../models/User.model.js';
+import Notification from '../models/Notification.model.js';
 import NotificationService from './notification.service.js';
+import sendNotification from '../utils/sendNotification.js';
 import { ApiError } from '../utils/errorHandler.js';
 
-/**
- * Winner Service - Comprehensive weekly and daily winner management
- */
 export class WinnerService {
-  /**
-   * Calculate current week number
-   */
+
+  // ─── Week Info ───────────────────────────────────────────────
   static getWeekInfo(date = new Date()) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
@@ -22,32 +18,26 @@ export class WinnerService {
     return { weekNumber, year: date.getFullYear() };
   }
 
-  /**
-   * Get top winners for a specific week with enhanced algorithm
-   * Tie-breaker: earliest completion time
-   */
+  // ─── Top Winners Calculate ───────────────────────────────────
   static async getWeeklyWinners(weekNumber, year, limit = 3) {
     try {
-      // Get all attempts for the week
       const attempts = await QuizAttempt.find({
         weekNumber,
         year,
         isCorrect: true
       })
         .populate('userId', 'name email profilePicture')
-        .sort({ createdAt: 1 }) // Earliest first
+        .sort({ createdAt: 1 })
         .lean();
 
-      if (attempts.length === 0) {
-        return [];
-      }
+      if (!attempts.length) return [];
 
-      // Group by user and aggregate
       const userScores = {};
-      const userFirstAttempt = {}; // Track first attempt time for tie-breaking
 
       for (const attempt of attempts) {
+        if (!attempt.userId) continue;
         const userId = attempt.userId._id.toString();
+
         if (!userScores[userId]) {
           userScores[userId] = {
             userId: attempt.userId._id,
@@ -55,85 +45,115 @@ export class WinnerService {
             userEmail: attempt.userId.email,
             profilePicture: attempt.userId.profilePicture,
             score: 0,
-            attempts: 0,
             firstAttemptTime: attempt.createdAt
           };
-          userFirstAttempt[userId] = attempt.createdAt;
         }
         userScores[userId].score += 1;
-        userScores[userId].attempts += 1;
       }
 
-      // Convert to array and sort with tie-breaker
-      let winners = Object.values(userScores).sort((a, b) => {
-        // Primary: Highest score
-        if (a.score !== b.score) {
-          return b.score - a.score;
-        }
-        // Tie-breaker: Earliest completion time
-        return new Date(a.firstAttemptTime) - new Date(b.firstAttemptTime);
-      });
-
-      // Trim to limit
-      winners = winners.slice(0, limit);
-
-      // Add rank
-      winners = winners.map((winner, index) => ({
-        ...winner,
-        rank: index + 1
-      }));
+      let winners = Object.values(userScores)
+        .sort((a, b) => {
+          if (a.score !== b.score) return b.score - a.score;
+          return new Date(a.firstAttemptTime) - new Date(b.firstAttemptTime);
+        })
+        .slice(0, limit)
+        .map((winner, index) => ({ ...winner, rank: index + 1 }));
 
       return winners;
     } catch (error) {
-      console.error('Error getting weekly winners:', error);
       throw new ApiError(500, 'Failed to fetch weekly winners', error.message);
     }
   }
 
-  /**
-   * Get both current and last week winners
-   */
+  // ─── Current + Last Week Winners ────────────────────────────
   static async getWinners() {
     try {
       const now = new Date();
       const currentWeek = this.getWeekInfo(now);
-      
-      // Last week
+
       const lastWeekDate = new Date(now);
       lastWeekDate.setDate(lastWeekDate.getDate() - 7);
       const lastWeek = this.getWeekInfo(lastWeekDate);
 
-      const [currentWeekWinners, lastWeekWinners] = await Promise.all([
-        this.getWeeklyWinners(currentWeek.weekNumber, currentWeek.year, 3),
-        this.getWeeklyWinners(lastWeek.weekNumber, lastWeek.year, 3)
+      const currentWeekAttempts = await QuizAttempt.aggregate([
+        { $match: { weekNumber: currentWeek.weekNumber, year: currentWeek.year, isCorrect: true } },
+        { $group: { _id: '$userId', score: { $sum: 1 }, firstAttemptTime: { $min: '$createdAt' } } },
+        { $sort: { score: -1, firstAttemptTime: 1 } },
+        { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
+        { $unwind: '$user' },
+        {
+          $project: {
+            userId: '$_id', userName: '$user.name',
+            profilePicture: '$user.profilePicture',
+            score: 1, firstAttemptTime: 1, _id: 0
+          }
+        }
       ]);
+
+      const currentWeekAllUsers = currentWeekAttempts.map((user, index) => ({
+        ...user, rank: index + 1, isTopThree: index < 3
+      }));
+
+      const [lastWeekAnnounced, lastWeekAttempts] = await Promise.all([
+        Winner.find({ weekNumber: lastWeek.weekNumber, year: lastWeek.year, cycleType: 'weekly' })
+          .populate('userId', 'name profilePicture')
+          .sort({ rank: 1 })
+          .lean(),
+
+        QuizAttempt.aggregate([
+          { $match: { weekNumber: lastWeek.weekNumber, year: lastWeek.year, isCorrect: true } },
+          { $group: { _id: '$userId', score: { $sum: 1 }, firstAttemptTime: { $min: '$createdAt' } } },
+          { $sort: { score: -1, firstAttemptTime: 1 } },
+          { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
+          { $unwind: '$user' },
+          {
+            $project: {
+              userId: '$_id', userName: '$user.name',
+              profilePicture: '$user.profilePicture',
+              score: 1, firstAttemptTime: 1, _id: 0
+            }
+          }
+        ])
+      ]);
+
+      const lastWeekAllUsers = lastWeekAttempts.map((user, index) => ({
+        ...user, rank: index + 1, isTopThree: index < 3
+      }));
+
+      const lastWeekTop3 = lastWeekAnnounced.map(w => ({
+        rank: w.rank, score: w.score,
+        userId: w.userId?._id, userName: w.userId?.name,
+        profilePicture: w.userId?.profilePicture,
+        isTopThree: true
+      }));
 
       return {
         currentWeek: {
-          week: currentWeek.weekNumber,
-          year: currentWeek.year,
-          winners: currentWeekWinners
+          week: currentWeek.weekNumber, year: currentWeek.year,
+          isLive: true,
+          note: 'Updates as users attempt quizzes. Final winners announced Sunday.',
+          totalParticipants: currentWeekAllUsers.length,
+          top3: currentWeekAllUsers.slice(0, 3),
+          allParticipants: currentWeekAllUsers
         },
         lastWeek: {
-          week: lastWeek.weekNumber,
-          year: lastWeek.year,
-          winners: lastWeekWinners
+          week: lastWeek.weekNumber, year: lastWeek.year,
+          isLive: false,
+          totalParticipants: lastWeekAllUsers.length,
+          top3: lastWeekTop3,
+          allParticipants: lastWeekAllUsers
         }
       };
     } catch (error) {
-      console.error('Error in getWinners:', error);
       throw error;
     }
   }
 
-  /**
-   * Announce and save weekly winners
-   */
+  // ─── Announce Weekly Winners (Cron) ─────────────────────────
   static async announceWeeklyWinners() {
     try {
-      console.log('Starting Weekly Winner Announcement Process...');
+      console.log('[WINNER] Starting Weekly Winner Announcement...');
 
-      // Get last week's winners (since we announce on Sunday for previous week)
       const now = new Date();
       const lastWeekDate = new Date(now);
       lastWeekDate.setDate(lastWeekDate.getDate() - 7);
@@ -141,22 +161,20 @@ export class WinnerService {
 
       const winners = await this.getWeeklyWinners(lastWeek.weekNumber, lastWeek.year, 3);
 
-      if (winners.length === 0) {
-        console.log(`No winners found for week ${lastWeek.weekNumber}, year ${lastWeek.year}`);
+      if (!winners.length) {
+        console.log(`[WINNER] No winners for week ${lastWeek.weekNumber}`);
         return { success: true, message: 'No winners found', count: 0 };
       }
 
-      // Save winners to database
+      // 1. DB mein save karo
       const winnerRecords = [];
       for (const winner of winners) {
-        // Check if already exists
         const exists = await Winner.findOne({
           userId: winner.userId,
           weekNumber: lastWeek.weekNumber,
           year: lastWeek.year,
           cycleType: 'weekly'
         });
-
         if (!exists) {
           winnerRecords.push({
             userId: winner.userId,
@@ -171,9 +189,62 @@ export class WinnerService {
 
       if (winnerRecords.length > 0) {
         await Winner.insertMany(winnerRecords);
+        console.log(`[WINNER] ${winnerRecords.length} winners saved to DB`);
       }
 
-      // Send notifications to winners
+      // 2. Saare users ko announcement notification
+      const rank1Winner = winners.find(w => w.rank === 1);
+
+      const allUsers = await User.find({
+        isDeleted: { $ne: true },
+        status: 'approved'
+      }).select('_id fcmToken').lean();
+
+      const announcementTitle = '🏆 Weekly Winners Announced!';
+      const announcementBody = rank1Winner
+        ? `${rank1Winner.userName} ne Week ${lastWeek.weekNumber} mein ${rank1Winner.score} correct answers ke saath Rank 1 haasil kiya!`
+        : `Week ${lastWeek.weekNumber} ke winners announce ho gaye! App mein dekho.`;
+
+      // Bulk DB notifications
+      const bulkNotifications = allUsers.map(user => ({
+        userId: user._id,
+        type: 'weekly_winners_announced',
+        title: announcementTitle,
+        body: announcementBody,
+        status: 'info',
+        data: {
+          weekNumber: lastWeek.weekNumber,
+          year: lastWeek.year,
+          rank1Name: rank1Winner?.userName || null
+        },
+        relatedEntityType: 'none'
+      }));
+
+      await Notification.insertMany(bulkNotifications);
+      console.log(`[WINNER] DB notifications created for ${allUsers.length} users`);
+
+      // FCM push notifications
+      const fcmTokens = allUsers.map(u => u.fcmToken).filter(Boolean);
+      for (const token of fcmTokens) {
+        try {
+          await sendNotification({
+            token,
+            title: announcementTitle,
+            body: announcementBody,
+            data: {
+              type: 'weekly_winners_announced',
+              weekNumber: String(lastWeek.weekNumber),
+              year: String(lastWeek.year)
+            }
+          });
+        } catch (err) {
+          console.error(`[FCM] Failed for token ${token}:`, err.message);
+        }
+      }
+
+      console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
+
+      // 3. Top 3 ko personal notification + email
       for (const winner of winners) {
         try {
           await NotificationService.sendWeeklyWinnerNotification(
@@ -183,12 +254,13 @@ export class WinnerService {
             lastWeek.weekNumber,
             lastWeek.year
           );
+          console.log(`[WINNER]  Rank ${winner.rank} notified: ${winner.userName}`);
         } catch (error) {
-          console.error(`Failed to send notification to winner ${winner.userId}:`, error);
+          console.error(`[WINNER]  Failed rank ${winner.rank} (${winner.userId}):`, error.message);
         }
       }
 
-      console.log(`✅ Weekly winner announcement completed. ${winners.length} winners announced.`);
+      console.log(`[WINNER]  Done. ${winners.length} winners announced for week ${lastWeek.weekNumber}`);
       return {
         success: true,
         message: 'Winners announced successfully',
@@ -197,193 +269,13 @@ export class WinnerService {
         year: lastWeek.year
       };
     } catch (error) {
-      console.error('Error in announceWeeklyWinners:', error);
+      console.error('[WINNER] announceWeeklyWinners error:', error);
       throw new ApiError(500, 'Failed to announce weekly winners', error.message);
     }
   }
 
-  /**
-   * Get user's ranking for current week
-   */
-  static async getUserRanking(userId, weekNumber = null, year = null) {
-    try {
-      if (!weekNumber || !year) {
-        const now = new Date();
-        const weekInfo = this.getWeekInfo(now);
-        weekNumber = weekInfo.weekNumber;
-        year = weekInfo.year;
-      }
+ 
 
-      // Get user's score
-      const userAttempts = await QuizAttempt.find({
-        userId,
-        weekNumber,
-        year,
-        isCorrect: true
-      }).lean();
-
-      const userScore = userAttempts.length;
-      const userFirstAttempt = userAttempts.length > 0 ? userAttempts[0].createdAt : null;
-
-      // Get all users' scores for ranking
-      const allScores = await QuizAttempt.aggregate([
-        {
-          $match: {
-            weekNumber,
-            year,
-            isCorrect: true
-          }
-        },
-        {
-          $group: {
-            _id: '$userId',
-            score: { $sum: 1 },
-            firstAttemptTime: { $first: '$createdAt' }
-          }
-        },
-        {
-          $sort: {
-            score: -1,
-            firstAttemptTime: 1
-          }
-        }
-      ]);
-
-      // Find user's rank
-      let userRank = 0;
-      for (let i = 0; i < allScores.length; i++) {
-        if (allScores[i]._id.toString() === userId.toString()) {
-          userRank = i + 1;
-          break;
-        }
-      }
-
-      return {
-        weekNumber,
-        year,
-        score: userScore,
-        rank: userRank,
-        totalParticipants: allScores.length
-      };
-    } catch (error) {
-      console.error('Error getting user ranking:', error);
-      throw new ApiError(500, 'Failed to fetch user ranking', error.message);
-    }
-  }
-
-  /**
-   * Get leaderboard for current week
-   */
-  static async getLeaderboard(weekNumber = null, year = null, limit = 10) {
-    try {
-      if (!weekNumber || !year) {
-        const now = new Date();
-        const weekInfo = this.getWeekInfo(now);
-        weekNumber = weekInfo.weekNumber;
-        year = weekInfo.year;
-      }
-
-      const leaderboard = await QuizAttempt.aggregate([
-        {
-          $match: {
-            weekNumber,
-            year,
-            isCorrect: true
-          }
-        },
-        {
-          $group: {
-            _id: '$userId',
-            score: { $sum: 1 },
-            firstAttemptTime: { $first: '$createdAt' }
-          }
-        },
-        {
-          $sort: {
-            score: -1,
-            firstAttemptTime: 1
-          }
-        },
-        {
-          $limit: limit
-        },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'user'
-          }
-        },
-        {
-          $unwind: '$user'
-        },
-        {
-          $project: {
-            userId: '$_id',
-            name: '$user.name',
-            email: '$user.email',
-            profilePicture: '$user.profilePicture',
-            score: 1,
-            firstAttemptTime: 1,
-            _id: 0
-          }
-        }
-      ]);
-
-      // Add rank
-      const leaderboardWithRank = leaderboard.map((item, index) => ({
-        ...item,
-        rank: index + 1
-      }));
-
-      return {
-        weekNumber,
-        year,
-        leaderboard: leaderboardWithRank
-      };
-    } catch (error) {
-      console.error('Error getting leaderboard:', error);
-      throw new ApiError(500, 'Failed to fetch leaderboard', error.message);
-    }
-  }
-
-  /**
-   * Get winner history
-   */
-  static async getWinnerHistory({ page = 1, limit = 10 } = {}) {
-    try {
-      const skip = (page - 1) * limit;
-
-      const [winners, total] = await Promise.all([
-        Winner.find()
-          .populate('userId', 'name email profilePicture')
-          .sort({ year: -1, weekNumber: -1, rank: 1 })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
-        Winner.countDocuments()
-      ]);
-
-      return {
-        data: winners,
-        pagination: {
-          page,
-          limit,
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      };
-    } catch (error) {
-      console.error('Error getting winner history:', error);
-      throw new ApiError(500, 'Failed to fetch winner history', error.message);
-    }
-  }
 }
 
 export default WinnerService;
-
-// Legacy export for backward compatibility with cron jobs
-export const announceWeeklyWinners = async () => {
-  return await WinnerService.announceWeeklyWinners();
-};

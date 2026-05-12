@@ -87,40 +87,67 @@ export class NotificationService {
    * Send content published notification to all users
    */
   static async sendContentPublishedNotification(contentData, adminId) {
-    try {
-      const contentType = contentData.contentType;
-      const title = contentData.textContent?.title || 
-                   contentData.quizContent?.title || 
-                   contentData.videoContent?.title || 
-                   'New Content Published';
-      
-      const body = `New ${contentType} content is now available!`;
+  try {
+    const contentType = contentData.contentType;
+    const contentTitle =
+      contentData.textContent?.title ||
+      contentData.quizContent?.title ||
+      contentData.videoContent?.title ||
+      'New Content';
 
-      // Get all active users
-      const users = await User.find({ 
-        status: 'approved',
-        fcmToken: { $exists: true, $ne: null }
-      }).select('_id fcmToken');
+    const unlocksAt = contentData.unlocksAt; // "08:00", "14:00", "19:00"
 
-      const notifications = users.map(user => ({
-        userId: user._id,
-        type: 'content_published',
-        title,
-        body,
-        status: 'info',
-        data: {
-          contentType,
-          contentId: contentData._id.toString()
-        },
-        relatedEntityId: contentData._id,
-        relatedEntityType: 'content'
-      }));
+    // Check karo — unlock time abhi aaya ya future mein hai
+    const now = moment().tz('Asia/Karachi');
+    const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
+    const unlockMoment = now.clone().set({ hour: unlockHour, minute: unlockMin, second: 0 });
 
-      await Notification.insertMany(notifications);
+    const isAlreadyUnlocked = now.isSameOrAfter(unlockMoment);
 
-      // Send push notifications
-      const fcmTokens = users.map(u => u.fcmToken).filter(Boolean);
-      for (const token of fcmTokens) {
+    // Content type readable naam
+    const typeLabel = {
+      text: 'Post',
+      quiz: 'Quiz',
+      video: 'Video'
+    }[contentType] || 'Content';
+
+    const title = isAlreadyUnlocked
+      ? `🔓 ${typeLabel} Ab Available Hai!`
+      : `📅 Naya ${typeLabel} Schedule Hua!`;
+
+    const body = isAlreadyUnlocked
+      ? `"${contentTitle}" ab available hai — abhi dekho!`
+      : `"${contentTitle}" aaj ${unlocksAt} PKT par publish hoga.`;
+
+    // Saare approved users
+    const users = await User.find({
+      status: 'approved',
+      isDeleted: { $ne: true }
+    }).select('_id fcmToken').lean();
+
+    // Bulk DB notifications
+    const notifications = users.map(user => ({
+      userId: user._id,
+      type: 'content_published',
+      title,
+      body,
+      status: 'info',
+      data: {
+        contentType,
+        contentId: contentData._id.toString(),
+        unlocksAt,
+        isAlreadyUnlocked
+      },
+      relatedEntityId: contentData._id,
+      relatedEntityType: 'content'
+    }));
+
+    await Notification.insertMany(notifications);
+
+    // FCM push — sirf woh users jinke paas token hai
+    const fcmTokens = users.map(u => u.fcmToken).filter(Boolean);
+    for (const token of fcmTokens) {
+      try {
         await sendNotification({
           token,
           title,
@@ -128,17 +155,23 @@ export class NotificationService {
           data: {
             type: 'content_published',
             contentType,
-            contentId: contentData._id.toString()
+            contentId: contentData._id.toString(),
+            unlocksAt,
+            isAlreadyUnlocked: String(isAlreadyUnlocked)
           }
         });
+      } catch (err) {
+        console.error(`[FCM] Token failed: ${token}`, err.message);
       }
-
-      return notifications.length;
-    } catch (error) {
-      console.error('Error sending content published notification:', error);
-      throw new ApiError(500, 'Failed to send notifications', error.message);
     }
+
+    console.log(`[NOTIFICATION] "${title}" sent to ${users.length} users`);
+    return notifications.length;
+  } catch (error) {
+    console.error('Error sending content published notification:', error);
+    throw new ApiError(500, 'Failed to send notifications', error.message);
   }
+}
 
   /**
    * Send weekly winner notification

@@ -35,18 +35,7 @@ router.post('/bookmark', asyncHandler(bookmarkAndArchiveController.bookmarkConte
 router.post('/remove-bookmark', asyncHandler(bookmarkAndArchiveController.removeBookmark));
 router.get('/bookmarks', asyncHandler(bookmarkAndArchiveController.getBookmarks));
 
-// Archive management endpoints
-router.post('/archive', asyncHandler(dailyContentController.archiveContent));
-router.post('/unarchive', asyncHandler(dailyContentController.unarchiveContent));
 
-
-
-// Winners endpoints - User can view winners
-// router.get('/winners/weekly', asyncHandler(quizAndWinnersController.getWeeklyWinners));
-// router.get('/winners/previous-week', asyncHandler(quizAndWinnersController.getPreviousWeekWinners));
-
-// Archive & Calendar viewing endpoints
-router.get('/archive/calendar', asyncHandler(bookmarkAndArchiveController.getArchiveCalendar));
-router.get('/archive/date/:date', asyncHandler(bookmarkAndArchiveController.getArchivedContentByDate));
+router.get('/archive/by-date', asyncHandler(dailyContentController.getArchiveByDate));
 
 export default router;

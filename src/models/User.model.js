@@ -35,6 +35,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  token: {
+    type: String,
+    default: null,
+  },
 
   // Subscription reference
   isSubscribed: { type: Boolean, default: false },

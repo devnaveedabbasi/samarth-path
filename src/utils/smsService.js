@@ -1,19 +1,17 @@
-import axios from "axios";
-
+import axios from 'axios';
 export async function sendOtpSms(phone, otp) {
   try {
-    const response = await axios.post(
+    const response = await axios.get(
       "https://www.fast2sms.com/dev/bulkV2",
       {
-        route: "otp",
-        variables_values: otp,
-        numbers: phone,
-      },
-      {
-        headers: {
-          authorization: process.env.FAST2SMS_API_KEY, // store in .env
-          "Content-Type": "application/json",
-        },
+        params: {
+          authorization: process.env.FAST2SMS_API_KEY,
+          route: "q",           // quick route — verification nahi chahiye
+          message: `Your OTP is ${otp}. Valid for 5 minutes.`,
+          language: "english",
+          flash: 0,
+          numbers: phone,
+        }
       }
     );
 
