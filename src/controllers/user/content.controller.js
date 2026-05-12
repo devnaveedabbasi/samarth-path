@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import Bookmark from '../../models/Bookmark.model.js';
 import { getPKTDateRange } from '../../utils/date.util.js';
 import { enrichContent } from '../../utils/contentResponse.js';
+import User from '../../models/User.model.js';
 
 // Helper function to check if content is unlocked based on current time
 
@@ -18,6 +19,10 @@ export async function getContent(req, res) {
   const userId = req.user._id;
   const { startOfDay, endOfDay } = getPKTDateRange();
 
+  const user=await User.findById(userId);
+  if(!user.isSubscribed){
+    return res.status(403).json(new ApiResponse(403, null, 'Subscription required to access content. Please subscribe to unlock all features.'));
+  }
   const contentList = await Content.find({
     date: { $gte: startOfDay, $lte: endOfDay },
     isActive: true,
@@ -388,6 +393,11 @@ export async function getArchiveByDate(req, res) {
   const userId = req.user._id;
   const { date, type = 'all' } = req.query;
 
+  
+  const user=await User.findById(userId);
+  if(!user.isSubscribed){
+    return res.status(403).json(new ApiResponse(403, null, 'Subscription required to access content. Please subscribe to unlock all features.'));
+  }
   if (!date) {
     throw new ApiError(400, 'Date parameter is required (format: YYYY-MM-DD)');
   }

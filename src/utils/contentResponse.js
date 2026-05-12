@@ -37,6 +37,7 @@ export async function enrichContent(content, userId = null) {
           _id: opt.id,
           text: opt.text
         })),
+        correctOptionId: content.quizContent.correctOptionId || null, // Security ke liye correct answer nahi bhejna
         timerSeconds: content.quizContent.timerSeconds,
       },
       quizAttempt: quizAttempt

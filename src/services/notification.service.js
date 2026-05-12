@@ -4,6 +4,8 @@ import User from '../models/User.model.js';
 import sendNotification from '../utils/sendNotification.js';
 import { sendVerificationEmail } from '../utils/emailService.js';
 import { ApiError } from '../utils/errorHandler.js';
+import moment from 'moment-timezone';
+import { TIMEZONE } from '../utils/date.util.js';
 
 /**
  * Notification Service - Centralized notification handling
@@ -98,10 +100,12 @@ export class NotificationService {
     const unlocksAt = contentData.unlocksAt; // "08:00", "14:00", "19:00"
 
     // Check karo — unlock time abhi aaya ya future mein hai
-    const now = moment().tz('Asia/Karachi');
-    const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
-    const unlockMoment = now.clone().set({ hour: unlockHour, minute: unlockMin, second: 0 });
-
+const now = moment().tz(TIMEZONE);    const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
+const unlockMoment = moment.tz(
+  `${moment().format('YYYY-MM-DD')} ${unlocksAt}`,
+  `YYYY-MM-DD HH:mm`,
+  TIMEZONE
+);
     const isAlreadyUnlocked = now.isSameOrAfter(unlockMoment);
 
     // Content type readable naam

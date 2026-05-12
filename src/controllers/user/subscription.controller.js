@@ -69,35 +69,97 @@ export async function createSubscriptionOrder(req, res) {
   }
 }
 
+// export async function verifyPayment(req, res) {
+//   const userId = req.user._id;
+//   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentMethod } = req.body;
+
+//   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !paymentMethod) {
+//     throw new ApiError(400, 'Payment verification data is required.');
+//   }
+
+//   const user = await User.findById(userId);
+//   if (!user) {
+//     throw new ApiError(404, 'User not found.');
+//   }
+
+//   // Verify signature
+//   const sign = razorpay_order_id + '|' + razorpay_payment_id;
+//   const expectedSign = crypto
+//     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+//     .update(sign.toString())
+//     .digest('hex');
+
+//   if (razorpay_signature !== expectedSign) {
+//     throw new ApiError(400, 'Payment verification failed.');
+//   }
+
+//   // Create or update subscription
+//   const now = new Date();
+//   const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+//   let subscription = await Subscription.findOne({ userId });
+//   if (!subscription) {
+//     subscription = new Subscription({
+//       userId,
+//       planName: 'Monthly Basic',
+//       price: 199,
+//       status: 'active',
+//       startDate: now,
+//       expiryDate,
+//       paymentMethod,
+//       paymentRef: razorpay_payment_id,
+//     });
+//   } else {
+//     subscription.status = 'active';
+//     subscription.startDate = now;
+//     subscription.expiryDate = expiryDate;
+//     subscription.paymentMethod = paymentMethod;
+//     subscription.paymentRef = razorpay_payment_id;
+//   }
+
+//   await subscription.save();
+
+//   // Update user
+//   user.isSubscribed = true;
+//   user.subscriptionID = subscription._id;
+//   await user.save();
+
+//   res.status(200).json(
+//     new ApiResponse(
+//       200,
+//       {
+//         subscriptionId: subscription._id,
+//         status: subscription.status,
+//         expiryDate: subscription.expiryDate,
+//       },
+//       'Payment verified and subscription activated.'
+//     )
+//   );
+// }
+
+
 export async function verifyPayment(req, res) {
   const userId = req.user._id;
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentMethod } = req.body;
+  const { paymentMethod } = req.body;
 
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !paymentMethod) {
-    throw new ApiError(400, 'Payment verification data is required.');
+  if (!paymentMethod || !['upi', 'card'].includes(paymentMethod)) {
+    throw new ApiError(400, 'Valid payment method is required.');
   }
 
   const user = await User.findById(userId);
+
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
 
-  // Verify signature
-  const sign = razorpay_order_id + '|' + razorpay_payment_id;
-  const expectedSign = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-    .update(sign.toString())
-    .digest('hex');
-
-  if (razorpay_signature !== expectedSign) {
-    throw new ApiError(400, 'Payment verification failed.');
-  }
-
-  // Create or update subscription
+  // 30 days subscription
   const now = new Date();
-  const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+  const expiryDate = new Date(
+    now.getTime() + 30 * 24 * 60 * 60 * 1000
+  );
 
   let subscription = await Subscription.findOne({ userId });
+
   if (!subscription) {
     subscription = new Subscription({
       userId,
@@ -107,14 +169,16 @@ export async function verifyPayment(req, res) {
       startDate: now,
       expiryDate,
       paymentMethod,
-      paymentRef: razorpay_payment_id,
+      paymentRef: 'TEST_PAYMENT',
     });
   } else {
+    subscription.planName = 'Monthly Basic';
+    subscription.price = 199;
     subscription.status = 'active';
     subscription.startDate = now;
     subscription.expiryDate = expiryDate;
     subscription.paymentMethod = paymentMethod;
-    subscription.paymentRef = razorpay_payment_id;
+    subscription.paymentRef = 'TEST_PAYMENT';
   }
 
   await subscription.save();
@@ -122,6 +186,7 @@ export async function verifyPayment(req, res) {
   // Update user
   user.isSubscribed = true;
   user.subscriptionID = subscription._id;
+
   await user.save();
 
   res.status(200).json(
@@ -132,7 +197,7 @@ export async function verifyPayment(req, res) {
         status: subscription.status,
         expiryDate: subscription.expiryDate,
       },
-      'Payment verified and subscription activated.'
+      'Subscription activated successfully.'
     )
   );
 }

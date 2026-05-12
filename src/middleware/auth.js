@@ -93,50 +93,90 @@ const authorize = (...roles) => {
 };
 
 const checkSubscription = async (req, res, next) => {
-  const user = req.user;
-  const Subscription = (await import('../models/Subscription.model.js')).default;
-  const subscription = await Subscription.findOne({ userId: user._id });
+  try {
+    const user = req.user;
 
-  if (!subscription) {
-    return res.status(403).json({
+    const Subscription = (
+      await import('../models/Subscription.model.js')
+    ).default;
+
+    const subscription = await Subscription.findOne({
+      userId: user._id
+    });
+
+    if (!subscription) {
+      return res.status(403).json({
+        success: false,
+        message: 'Subscription not found.'
+      });
+    }
+
+    const now = new Date();
+
+    // Trial expired
+    if (
+      subscription.status === 'trial' &&
+      subscription.trialEndDate < now
+    ) {
+      subscription.status = 'expired';
+
+      user.isSubscribed = false;
+
+      await subscription.save();
+      await user.save();
+
+      return res.status(403).json({
+        success: false,
+        message:
+          'Trial expired. Please subscribe.'
+      });
+    }
+
+    // Paid subscription expired
+    if (
+      subscription.status === 'active' &&
+      subscription.expiryDate < now
+    ) {
+      subscription.status = 'expired';
+
+      user.isSubscribed = false;
+
+      await subscription.save();
+      await user.save();
+
+      return res.status(403).json({
+        success: false,
+        message:
+          'Subscription expired. Please renew.'
+      });
+    }
+
+    // Block expired/cancelled users
+    if (
+      subscription.status !== 'trial' &&
+      subscription.status !== 'active'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'No active subscription found.'
+      });
+    }
+
+    req.subscription = subscription;
+
+    next();
+  } catch (error) {
+    console.error(
+      'Subscription middleware error:',
+      error
+    );
+
+    return res.status(500).json({
       success: false,
-      message: 'Subscription not found.'
+      message: 'Subscription check failed.'
     });
   }
-
-  const now = new Date();
-
-  //  TODO: Trial expiry handling - currently we allow access but can restrict in other middleware/controllers based on subscription status. If you want to block access itself after trial expires, uncomment the below code and adjust logic as needed.
-  // if (subscription.status === 'trial' && subscription.trialEndDate < now) {
-  //   subscription.status = 'expired';
-  //   await subscription.save();
-  //   user.isSubscribed = false;
-  //   await user.save();
-  //   return res.status(403).json({
-  //     success: false,
-  //     message: 'Trial period expired. Please subscribe to continue.'
-  //   });
-  // }
-  if (subscription.status === 'active' && subscription.expiryDate < now) {
-    subscription.status = 'expired';
-    await subscription.save();
-    user.isSubscribed = false;
-    await user.save();
-    return res.status(403).json({
-      success: false,
-      message: 'Subscription expired. Please renew.'
-    });
-  }
-
-  // TODO: Depending on your business logic, you might want to allow users with expired subscriptions to access but restrict content. If you want to block access itself for expired subscriptions, uncomment the below code and adjust logic as needed.
-  // if (subscription.status !== 'trial' && subscription.status !== 'active') {
-  //   return res.status(403).json({
-  //     success: false,
-  //     message: 'Subscription required. Please subscribe.'
-  //   });
-  // }
-
-  next();
 };
 
 const checkFullAccess = async (req, res, next) => {

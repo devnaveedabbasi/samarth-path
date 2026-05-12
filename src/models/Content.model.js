@@ -73,7 +73,14 @@ const contentSchema = new mongoose.Schema({
 });
 
 // Compound index to ensure one content per type per date
-contentSchema.index({ contentType: 1, date: 1 }, { unique: true });
-
+contentSchema.index(
+  { contentType: 1, date: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      isDeleted: false
+    }
+  }
+);
 const Content = mongoose.models.Content || mongoose.model('Content', contentSchema);
 export default Content;

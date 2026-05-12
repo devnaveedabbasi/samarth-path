@@ -1,6 +1,8 @@
 import { Router } from 'express';
-import { authMiddleware as authenticateToken } from '../../middleware/auth.js';
-
+import {
+  authMiddleware,
+  checkSubscription
+} from '../../middleware/auth.js';
 import authRoute from './auth.routes.js';
 import subscriptionRoute from './subscription.routes.js';
 import contentRoutes from './contentRoutes.js';
@@ -41,10 +43,12 @@ export const saveFcmToken = async (req, res) => {
 };
 
 
-router.post("/save-fcm-token", authenticateToken, saveFcmToken);
+router.post("/save-fcm-token", authMiddleware, saveFcmToken);
 
 router.use('/auth', authRoute);
 router.use('/subscription', subscriptionRoute);
+router.use(authMiddleware);
+router.use(checkSubscription);
 router.use('/content', contentRoutes);
 router.use('/winners', winnersRoutes);
 router.use('/notifications', notificationRoutes);

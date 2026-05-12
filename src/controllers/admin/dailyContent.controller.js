@@ -467,12 +467,14 @@ export async function createVideoContent(req, res) {
     throw new ApiError(400, "Could not verify video duration.");
   }
 
-  const videoDate = date ? new Date(date) : new Date();
-  videoDate.setHours(0, 0, 0, 0);
+const videoDate = date ? new Date(date) : new Date();
+
+videoDate.setUTCHours(0, 0, 0, 0);
 
   const existingVideo = await Content.findOne({
     date: videoDate,
     contentType: "video",
+    isDeleted: { $ne: true }
   });
 
   if (existingVideo) {
@@ -499,6 +501,18 @@ export async function createVideoContent(req, res) {
       throw new ApiError(500, "Failed to upload files to S3.");
     }
     console.log("Video uploaded to S3:", videoUpload);
+
+    await Content.updateOne(
+  {
+    contentType: "video",
+    date: videoDate,
+    isDeleted: false
+  },
+  {
+    $set: { isDeleted: true }
+  }
+);
+
     const content = await Content.create({
       contentType: "video",
       unlocksAt,
