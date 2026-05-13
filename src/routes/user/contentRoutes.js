@@ -14,7 +14,6 @@ router.use(requireRole('user'));
 router.use(checkSubscription);
 
 router.get('/', asyncHandler(dailyContentController.getContent));
-router.get('/:contentId', asyncHandler(dailyContentController.getContentById));
 
 
 router.post('/quiz/submit', asyncHandler(quizAndWinnersController.submitQuizAnswer));
@@ -37,5 +36,6 @@ router.get('/bookmarks', asyncHandler(bookmarkAndArchiveController.getBookmarks)
 
 
 router.get('/archive/by-date', asyncHandler(dailyContentController.getArchiveByDate));
+router.get('/:contentId', asyncHandler(dailyContentController.getContentById));
 
 export default router;

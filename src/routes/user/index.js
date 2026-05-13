@@ -9,7 +9,7 @@ import contentRoutes from './contentRoutes.js';
 import winnersRoutes from './winners.routes.js';
 import notificationRoutes from './notification.routes.js';
 import User from '../../models/User.model.js';
-
+import ConsultantRoute from './consultant.routes.js'
 
 const router = Router();
 
@@ -51,6 +51,7 @@ router.use(authMiddleware);
 router.use(checkSubscription);
 router.use('/content', contentRoutes);
 router.use('/winners', winnersRoutes);
+router.use('/consultant', ConsultantRoute);
 router.use('/notifications', notificationRoutes);
 
 export default router;

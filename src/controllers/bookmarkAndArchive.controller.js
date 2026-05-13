@@ -84,6 +84,7 @@ export async function removeBookmark(req, res) {
   );
 }
 
+
 export async function getBookmarks(req, res) {
   const userId = req.user._id;
 

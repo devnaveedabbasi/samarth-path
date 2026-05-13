@@ -581,21 +581,31 @@ export async function getVideoById(req, res) {
 
 export async function updateVideoContent(req, res) {
   const { contentId: id } = req.params;
+  const { title, description, unlocksAt, hasListenOnlyMode } = req.body || {};
+  // date update allowed nahi — sirf today ki content update hogi
 
-  // 1. Body safety check (req.body agar undefined ho)
-  const { title, description, unlocksAt, date, hasListenOnlyMode } = req.body || {};
-
-  // 2. Existing Content find karein
-  const content = await Content.findOne({ _id: id, contentType: "video" });
+  // 1. Content find karo
+  const content = await Content.findOne({ _id: id, contentType: "video", isDeleted: { $ne: true } });
   if (!content) {
     throw new ApiError(404, "Video content not found.");
   }
+
+  // 2. Sirf aaj ki UNLOCKED content update ho sakti hai
+  const now = moment().tz("Asia/Karachi");
+  const startOfDay = now.clone().startOf('day').toDate();
+  const endOfDay = now.clone().endOf('day').toDate();
+
+  const contentDate = new Date(content.date);
+  if (contentDate < startOfDay || contentDate > endOfDay) {
+    throw new ApiError(400, "Today's video content can only be updated.");
+  }
+
 
   // 3. File Paths
   const videoLocalPath = req.files?.video?.[0]?.path;
   const thumbnailLocalPath = req.files?.image?.[0]?.path;
 
-  // 4. Duration Validation (Agar nayi video upload ho rahi hai)
+  // 4. Duration Validation
   let durationSeconds = content.videoContent.durationSeconds;
   if (videoLocalPath) {
     try {
@@ -614,31 +624,15 @@ export async function updateVideoContent(req, res) {
       }
     } catch (error) {
       if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+      if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
       throw new ApiError(400, "Could not verify video duration.");
     }
   }
 
-  // 5. Date Validation (Check for date collision)
-  let videoDate = content.date;
-  if (date) {
-    videoDate = new Date(date);
-    videoDate.setHours(0, 0, 0, 0);
-
-    const existingVideo = await Content.findOne({
-      date: videoDate,
-      contentType: "video",
-      _id: { $ne: id } // Current video ko chhor kar check karein
-    });
-
-    if (existingVideo) {
-      if (videoLocalPath) fs.unlinkSync(videoLocalPath);
-      if (thumbnailLocalPath) fs.unlinkSync(thumbnailLocalPath);
-      throw new ApiError(400, `Video content for ${videoDate.toDateString()} already exists.`);
-    }
-  }
-
+  // 5. S3 Upload
   let videoUrl = content.videoContent.videoUrl;
   let thumbnailUrl = content.videoContent.thumbnail;
+
   if (videoLocalPath) {
     const videoUpload = await uploadOnS3({
       localFilePath: videoLocalPath,
@@ -646,11 +640,7 @@ export async function updateVideoContent(req, res) {
       folder: "videos",
       originalname: req.files?.video?.[0]?.originalname,
     });
-
-    if (!videoUpload) {
-      throw new ApiError(500, "Failed to upload video to AWS S3.");
-    }
-
+    if (!videoUpload) throw new ApiError(500, "Failed to upload video to AWS S3.");
     videoUrl = videoUpload.secure_url;
   }
 
@@ -661,34 +651,27 @@ export async function updateVideoContent(req, res) {
       folder: "thumbnails",
       originalname: req.files?.image?.[0]?.originalname,
     });
-
-    if (!thumbnailUpload) {
-      throw new ApiError(500, "Failed to upload thumbnail to AWS S3.");
-    }
-
+    if (!thumbnailUpload) throw new ApiError(500, "Failed to upload thumbnail to AWS S3.");
     thumbnailUrl = thumbnailUpload.secure_url;
   }
 
-  // 7. Update logic
+  // 6. Update — date change nahi hogi, jo fields bhejo woh update hongi
+  const updateData = {
+    unlocksAt: unlocksAt || content.unlocksAt,
+    "videoContent.title": title || content.videoContent.title,
+    "videoContent.description": description || content.videoContent.description,
+    "videoContent.videoUrl": videoUrl,
+    "videoContent.thumbnail": thumbnailUrl,
+    "videoContent.durationSeconds": Math.round(durationSeconds),
+    "videoContent.isAutoMute": true,
+    "videoContent.hasListenOnlyMode": hasListenOnlyMode !== undefined
+      ? (hasListenOnlyMode === "true" || hasListenOnlyMode === true)
+      : content.videoContent.hasListenOnlyMode,
+  };
+
   const updatedContent = await Content.findByIdAndUpdate(
     id,
-    {
-      $set: {
-        date: videoDate,
-        unlocksAt: unlocksAt || content.unlocksAt,
-        videoContent: {
-          title: title || content.videoContent.title,
-          description: description || content.videoContent.description,
-          videoUrl,
-          thumbnail: thumbnailUrl,
-          durationSeconds: Math.round(durationSeconds),
-          isAutoMute: true,
-          hasListenOnlyMode: hasListenOnlyMode !== undefined
-            ? (hasListenOnlyMode === "true" || hasListenOnlyMode === true)
-            : content.videoContent.hasListenOnlyMode,
-        },
-      },
-    },
+    { $set: updateData },
     { new: true }
   );
 

@@ -41,7 +41,7 @@ export function isValidIndianPhone(phone) {
 }
 export async function register(req, res) {
   const name = String(req.body.name || '').trim();
-  let phone = String(req.body.phone || '').trim(); 
+  let phone = String(req.body.phone || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
@@ -52,7 +52,7 @@ export async function register(req, res) {
     throw new ApiError(400, 'Invalid phone number format. Must be a valid Indian mobile number.');
   }
 
-  phone = normalizePhone(phone); 
+  phone = normalizePhone(phone);
   console.log("Normalized phone:", phone);
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
@@ -73,7 +73,7 @@ export async function register(req, res) {
     throw new ApiError(408, 'Email already registered.');
   }
 
-  
+
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
   const otp = generateNumericOtp(6);
 
@@ -125,7 +125,7 @@ export async function verifyPhone(req, res) {
   if (!phone || !otp) {
     throw new ApiError(400, 'Phone number and OTP are required.');
   }
-console.log("Verifying phone:", phone, "with OTP:", otp);
+  console.log("Verifying phone:", phone, "with OTP:", otp);
   const user = await User.findOne({ phone, role: 'user' });
 
   if (!user) {
@@ -338,7 +338,7 @@ export async function verifyResetOtp(req, res) {
     throw new ApiError(429, 'Too many attempts. Request new OTP.');
   }
 
-   if (!user.resetOTP || !user.resetOtpExpiry || user.resetOtpExpiry < new Date()) {
+  if (!user.resetOTP || !user.resetOtpExpiry || user.resetOtpExpiry < new Date()) {
     user.resetOtpAttempts += 1;
     await user.save();
     throw new ApiError(410, 'OTP expired or invalid.');
@@ -471,9 +471,35 @@ export async function updateProfile(req, res) {
 
   if (dateOfBirth) {
     const dob = new Date(dateOfBirth);
+    const today = new Date();
+
+    let age = today.getFullYear() - dob.getFullYear();
+
+    const monthDiff = today.getMonth() - dob.getMonth();
+
     if (isNaN(dob.getTime())) {
       throw new ApiError(400, 'Invalid dateOfBirth value.');
     }
+
+    if (dob > new Date()) {
+      throw new ApiError(400, 'dateOfBirth cannot be in the future.');
+    }
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < dob.getDate())
+    ) {
+      age--;
+    }
+
+    if (age < 18) {
+      throw new ApiError(400, 'You must be at least 18 years old.');
+    }
+
+    if (dob.getFullYear() < 1900) {
+      throw new ApiError(400, 'dateOfBirth year must be 1900 or later.');
+    }
+
+
     const existingDob = user.dateOfBirth ? new Date(user.dateOfBirth) : null;
     if (!existingDob || dob.getTime() !== existingDob.getTime()) {
       user.dateOfBirth = dob;
@@ -481,21 +507,21 @@ export async function updateProfile(req, res) {
     }
   }
 
-if (req.file) {
-  const localPath = req.file.path || req.file.tempFilePath || null;
-  if (localPath) {
-    const uploadRes = await uploadOnS3({
-      localFilePath: localPath,
-      mimetype: req.file.mimetype,
-      originalname: req.file.originalname,
-    });
+  if (req.file) {
+    const localPath = req.file.path || req.file.tempFilePath || null;
+    if (localPath) {
+      const uploadRes = await uploadOnS3({
+        localFilePath: localPath,
+        mimetype: req.file.mimetype,
+        originalname: req.file.originalname,
+      });
 
-    if (uploadRes && uploadRes.secure_url) {
-      user.profilePicture = uploadRes.secure_url;
-      updatedFields.profilePicture = user.profilePicture;
+      if (uploadRes && uploadRes.secure_url) {
+        user.profilePicture = uploadRes.secure_url;
+        updatedFields.profilePicture = user.profilePicture;
+      }
     }
   }
-}
 
 
   if (Object.keys(updatedFields).length === 0) {
