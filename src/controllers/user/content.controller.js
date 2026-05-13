@@ -234,7 +234,7 @@ export async function getComments(req, res) {
   }
 
   const comments = await Comment.find(query)
-    .populate('userId', 'name')
+    .populate('userId', 'name email profilePicture') 
     .sort({ createdAt: -1 })
     .limit(100);
 

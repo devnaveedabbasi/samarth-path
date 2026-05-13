@@ -11,10 +11,6 @@ import { ApiError } from "./utils/errorHandler.js";
 
 const app = express();
 
-if (process.env.TRUST_PROXY === "true") {
-  app.set("trust proxy", 1);
-}
-
 const server = createServer(app);
 
 app.use(cors({
