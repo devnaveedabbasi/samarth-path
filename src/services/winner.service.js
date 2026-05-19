@@ -120,12 +120,20 @@ export class WinnerService {
         ...user, rank: index + 1, isTopThree: index < 3
       }));
 
-      const lastWeekTop3 = lastWeekAnnounced.map(w => ({
-        rank: w.rank, score: w.score,
-        userId: w.userId?._id, userName: w.userId?.name,
+      // Winner collection se official top3
+      const lastWeekTop3Announced = lastWeekAnnounced.map(w => ({
+        rank: w.rank,
+        score: w.score,
+        userId: w.userId?._id,
+        userName: w.userId?.name,
         profilePicture: w.userId?.profilePicture,
         isTopThree: true
       }));
+
+      // ✅ Fallback: agar Winner collection empty hai toh QuizAttempt data use karo
+      const lastWeekTop3 = lastWeekTop3Announced.length > 0
+        ? lastWeekTop3Announced
+        : lastWeekAllUsers.slice(0, 3).map(u => ({ ...u, isTopThree: true }));
 
       return {
         currentWeek: {
@@ -156,9 +164,8 @@ export class WinnerService {
 
       const now = new Date();
       const lastWeekDate = new Date(now);
-      lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+      lastWeekDate.setDate(lastWeekDate.getDate() - 1); // Saturday
       const lastWeek = this.getWeekInfo(lastWeekDate);
-
       const winners = await this.getWeeklyWinners(lastWeek.weekNumber, lastWeek.year, 3);
 
       if (!winners.length) {
@@ -208,7 +215,7 @@ export class WinnerService {
       // Bulk DB notifications
       const bulkNotifications = allUsers.map(user => ({
         userId: user._id,
-        type: 'weekly_winners_announced',
+        type: 'winner_announcement',
         title: announcementTitle,
         body: announcementBody,
         status: 'info',
@@ -224,23 +231,29 @@ export class WinnerService {
       console.log(`[WINNER] DB notifications created for ${allUsers.length} users`);
 
       // FCM push notifications
-      const fcmTokens = allUsers.map(u => u.fcmToken).filter(Boolean);
-      for (const token of fcmTokens) {
-        try {
-          await sendNotification({
-            token,
-            title: announcementTitle,
-            body: announcementBody,
-            data: {
-              type: 'weekly_winners_announced',
-              weekNumber: String(lastWeek.weekNumber),
-              year: String(lastWeek.year)
-            }
-          });
-        } catch (err) {
-          console.error(`[FCM] Failed for token ${token}:`, err.message);
-        }
-      }
+const fcmTokens = allUsers.map(u => u.fcmToken).filter(Boolean);
+for (const user of allUsers) {
+  if (!user.fcmToken) continue;
+  try {
+    await sendNotification({
+      token: user.fcmToken,
+      title: announcementTitle,
+      body: announcementBody,
+      data: Object.fromEntries(
+        Object.entries({ type: 'winner_announcement' }).map(([k, v]) => [k, String(v)])
+      )
+    });
+  } catch (err) {
+    if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
+      await User.findByIdAndUpdate(user._id, { $unset: { fcmToken: 1 } });
+      console.log(`[FCM] Removed invalid token for user: ${user._id}`);
+    } else {
+      console.error(`[FCM] Failed for token ${user.fcmToken}:`, err.message);
+    }
+  }
+}
+
+console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
 
       console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
 
@@ -274,7 +287,6 @@ export class WinnerService {
     }
   }
 
- 
 
 }
 

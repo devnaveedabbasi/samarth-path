@@ -14,50 +14,44 @@ export class NotificationService {
   /**
    * Create and send notification to user
    */
-  static async createNotification(userId, {
-    type,
-    title,
-    body,
-    status = 'info',
-    data = {},
-    relatedEntityId = null,
-    relatedEntityType = 'none'
-  }) {
-    try {
-      // Save notification to database
-      const notification = await Notification.create({
-        userId,
-        type,
-        title,
-        body,
-        status,
-        data,
-        relatedEntityId,
-        relatedEntityType
-      });
+static async createNotification(userId, {
+  type, title, body, status = 'info',
+  data = {}, relatedEntityId = null, relatedEntityType = 'none'
+}) {
+  try {
+    const notification = await Notification.create({
+      userId, type, title, body, status, data,
+      relatedEntityId, relatedEntityType
+    });
 
-      // Get user's FCM token and send push notification
-      const user = await User.findById(userId).select('fcmToken email');
-      if (user?.fcmToken) {
+    const user = await User.findById(userId).select('fcmToken email');
+    if (user?.fcmToken) {
+      try {
         await sendNotification({
           token: user.fcmToken,
           title,
           body,
-          data: {
-            type,
-            status,
-            ...data
-          }
+          // ✅ FCM sirf strings accept karta hai
+          data: Object.fromEntries(
+            Object.entries({ type, status, ...data }).map(([k, v]) => [k, String(v)])
+          )
         });
+      } catch (err) {
+        if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
+          await User.findByIdAndUpdate(userId, { $unset: { fcmToken: 1 } });
+          console.log(`[FCM] Removed invalid token for user: ${userId}`);
+        } else {
+          console.error(`[FCM] Push failed for user ${userId}:`, err.message);
+        }
       }
-
-      return notification;
-    } catch (error) {
-      console.error('Error creating notification:', error);
-      throw new ApiError(500, 'Failed to create notification', error.message);
     }
-  }
 
+    return notification;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    throw new ApiError(500, 'Failed to create notification', error.message);
+  }
+}
   /**
    * Send admin status change notification
    * suspend => warning, blocked => error, active => success
