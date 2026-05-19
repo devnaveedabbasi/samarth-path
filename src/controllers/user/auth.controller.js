@@ -52,8 +52,7 @@ export async function register(req, res) {
     throw new ApiError(400, 'Invalid phone number format. Must be a valid Indian mobile number.');
   }
 
-  phone = normalizePhone(phone);
-  console.log("Normalized phone:", phone);
+ 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     throw new ApiError(400, 'Invalid email format.');

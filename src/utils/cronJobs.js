@@ -1,15 +1,17 @@
 import cron from 'node-cron';
 import moment from 'moment-timezone';
 import Content from '../models/Content.model.js';
-import  WinnerService  from '../services/winner.service.js';
+import WinnerService from '../services/winner.service.js';
 import NotificationService from '../services/notification.service.js';
+import Subscription from '../models/Subscription.model.js';
+import User from '../models/User.model.js';
 import { TIMEZONE, CONTENT_UNLOCK_TIMES } from '../utils/date.util.js';
 
 let isProcessing = false;
 
 /**
  * Cron: Content Unlock Job
- * Har minute chalta hai — unlocksAt time par content unlock karta hai aur notification bhejta hai
+ * Runs every minute — unlocks content at scheduled time and sends notifications
  */
 cron.schedule('* * * * *', async () => {
   if (isProcessing) return;
@@ -105,5 +107,42 @@ cron.schedule('0 2 * * 0', async () => {
   scheduled: true,
   timezone: TIMEZONE
 });
+
+
+cron.schedule('*/10 * * * *', async () => {
+  console.log('[CRON] Running Subscription Expiry Check...');
+
+  try {
+    const now = new Date();
+
+    const expiredSubs = await Subscription.find({
+      trialEndDate: { $lte: now },
+      status: 'trial'
+    });
+
+    if (!expiredSubs.length) {
+      console.log('[CRON] No expired subscriptions found');
+      return;
+    }
+
+    for (const sub of expiredSubs) {
+      sub.status = 'expired';
+      await sub.save();
+
+      await User.findByIdAndUpdate(sub.userId, {
+        isSubscribed: false,
+        subscriptionID: null
+      });
+
+      console.log(`[CRON] Expired subscription for user: ${sub.userId}`);
+    }
+
+    console.log(`[CRON] Total expired: ${expiredSubs.length}`);
+
+  } catch (error) {
+    console.error('[CRON ERROR] Subscription expiry:', error.message);
+  }
+});
+
 
 console.log('[CRON]  All scheduled jobs initialized');

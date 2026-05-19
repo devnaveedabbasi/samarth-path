@@ -99,7 +99,7 @@ export class NotificationService {
 
     const unlocksAt = contentData.unlocksAt; // "08:00", "14:00", "19:00"
 
-    // Check karo — unlock time abhi aaya ya future mein hai
+    // Check if unlock time has already arrived or is in the future
 const now = moment().tz(TIMEZONE);    const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
 const unlockMoment = moment.tz(
   `${moment().format('YYYY-MM-DD')} ${unlocksAt}`,
@@ -116,14 +116,14 @@ const unlockMoment = moment.tz(
     }[contentType] || 'Content';
 
     const title = isAlreadyUnlocked
-      ? `🔓 ${typeLabel} Ab Available Hai!`
-      : `📅 Naya ${typeLabel} Schedule Hua!`;
+      ? `🔓 ${typeLabel} Now Available!`
+      : `📅 New ${typeLabel} Scheduled!`;
 
     const body = isAlreadyUnlocked
-      ? `"${contentTitle}" ab available hai — abhi dekho!`
-      : `"${contentTitle}" aaj ${unlocksAt} PKT par publish hoga.`;
+      ? `"${contentTitle}" is now available — watch it now!`
+      : `"${contentTitle}" will be published today at ${unlocksAt} PKT.`;
 
-    // Saare approved users
+    // Get all approved users
     const users = await User.find({
       status: 'approved',
       isDeleted: { $ne: true }
@@ -148,7 +148,7 @@ const unlockMoment = moment.tz(
 
     await Notification.insertMany(notifications);
 
-    // FCM push — sirf woh users jinke paas token hai
+    // Send FCM push to users who have FCM tokens
     const fcmTokens = users.map(u => u.fcmToken).filter(Boolean);
     for (const token of fcmTokens) {
       try {

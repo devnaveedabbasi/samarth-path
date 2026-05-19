@@ -582,15 +582,15 @@ export async function getVideoById(req, res) {
 export async function updateVideoContent(req, res) {
   const { contentId: id } = req.params;
   const { title, description, unlocksAt, hasListenOnlyMode } = req.body || {};
-  // date update allowed nahi — sirf today ki content update hogi
+  // Date updates are not allowed — only today's content can be updated
 
-  // 1. Content find karo
+  // 1. Find the content
   const content = await Content.findOne({ _id: id, contentType: "video", isDeleted: { $ne: true } });
   if (!content) {
     throw new ApiError(404, "Video content not found.");
   }
 
-  // 2. Sirf aaj ki UNLOCKED content update ho sakti hai
+  // 2. Only today's UNLOCKED content can be updated
   const now = moment().tz("Asia/Karachi");
   const startOfDay = now.clone().startOf('day').toDate();
   const endOfDay = now.clone().endOf('day').toDate();
@@ -655,7 +655,7 @@ export async function updateVideoContent(req, res) {
     thumbnailUrl = thumbnailUpload.secure_url;
   }
 
-  // 6. Update — date change nahi hogi, jo fields bhejo woh update hongi
+  // 6. Update — date cannot be changed, only submitted fields will be updated
   const updateData = {
     unlocksAt: unlocksAt || content.unlocksAt,
     "videoContent.title": title || content.videoContent.title,

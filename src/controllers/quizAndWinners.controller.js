@@ -140,7 +140,7 @@ export async function getWinners(req, res) {
   lastWeekDate.setDate(lastWeekDate.getDate() - 7);
   const lastWeek = getWeekInfo(lastWeekDate);
 
-  // ── Current week — QuizAttempt se live ──
+  // ── Current week — Real-time QuizAttempt data ──
   const currentWeekAttempts = await QuizAttempt.aggregate([
     {
       $match: {
@@ -184,7 +184,7 @@ export async function getWinners(req, res) {
     isTopThree: index < 3
   }));
 
-  // ── Last week — Winner model (official) + saare participants ──
+  // ── Last week — Winner model (official) + all participants ──
   const [lastWeekAnnounced, lastWeekAttempts] = await Promise.all([
     Winner.find({
       weekNumber: lastWeek.weekNumber,

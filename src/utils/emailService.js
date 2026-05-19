@@ -38,8 +38,8 @@ export const sendEmail = async (to, subject, html) => {
 };
 
 /**
- * Verification Email bhejny ka function
- * @param {string} to - User ka email
+ * Send verification email function
+ * @param {string} to - User's email
  * @param {string} token - Verification token
  */
 export const sendVerificationEmail = async (to, token) => {

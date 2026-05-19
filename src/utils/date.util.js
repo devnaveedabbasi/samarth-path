@@ -2,7 +2,7 @@ import moment from 'moment-timezone';
 
 export const TIMEZONE = 'Asia/Karachi';
 
-// Yahan sirf time change karo — baaki sab automatically update ho jayega
+// Change only the time here — everything else will automatically update
 export const CONTENT_UNLOCK_TIMES = {
   text:  '08:00',
   quiz:  '14:00',
@@ -19,7 +19,7 @@ export function getPKTDateRange(date = null) {
     };
   }
 
-  // Aaj ki PKT range
+  // Today's PKT date range
   const now = moment().tz(TIMEZONE);
   return {
     startOfDay: now.clone().startOf('day').toDate(),

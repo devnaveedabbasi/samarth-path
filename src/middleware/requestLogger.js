@@ -1,6 +1,6 @@
 /**
- * Har incoming request ko log karta hai (method, path, status, time, IP).
- * POST body log hoti hai lekin password/otp/token wale fields [REDACTED].
+ * Logs each incoming request (method, path, status, time, IP).
+ * POST body is logged but password/otp/token fields are [REDACTED].
  */
 const SENSITIVE_KEYS = /password|otp|token|secret|authorization|refreshtoken/i;
 
