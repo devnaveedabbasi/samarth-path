@@ -14,22 +14,42 @@ const app = express();
 
 const server = createServer(app);
 
+// CORS Configuration - Allow multiple Vercel deployment URLs and local development
 const allowedOrigins = [
   "http://localhost:3000",
+  "http://localhost:3001",
   "https://samarth-path-dashbaord.vercel.app",
+  "https://*.vercel.app", 
 ];
+
+// Regex pattern for Vercel URLs
+const vercelUrlPattern = /^https:\/\/(.+\.)?vercel\.app$/;
+
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
+    // Check if origin matches allowed list
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.log("Blocked CORS origin:", origin);
+    
+    // Check if origin matches Vercel pattern
+    if (vercelUrlPattern.test(origin)) return callback(null, true);
+    
+    // Allow in development
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    console.log("CORS blocked origin:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
   credentials: false,
   preflightContinue: false,  
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 200,
+  maxAge: 86400 // 24 hours
 }));
 
 
