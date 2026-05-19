@@ -6,7 +6,7 @@ import connectDb from "./config/db.js";
 import routes from "./routes/index.js";
 import cors from "cors";
 import requestLogger from "./middleware/requestLogger.js";
-import "./utils/cronJobs.js"; 
+import "./utils/cronJobs.js";
 import errorHandler from "./middleware/errorHandler.js";
 import { ApiError } from "./utils/errorHandler.js";
 
@@ -19,7 +19,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
   "https://samarth-path-dashbaord.vercel.app",
-  "https://*.vercel.app", 
+  "https://*.vercel.app",
 ];
 
 // Regex pattern for Vercel URLs
@@ -29,25 +29,25 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     // Check if origin matches allowed list
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    
+
     // Check if origin matches Vercel pattern
     if (vercelUrlPattern.test(origin)) return callback(null, true);
-    
+
     // Allow in development
     if (process.env.NODE_ENV === 'development') {
       return callback(null, true);
     }
-    
+
     console.log("CORS blocked origin:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
   credentials: false,
-  preflightContinue: false,  
+  preflightContinue: false,
   optionsSuccessStatus: 200,
   maxAge: 86400 // 24 hours
 }));
