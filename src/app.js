@@ -22,36 +22,29 @@ const allowedOrigins = [
   "https://*.vercel.app",
 ];
 
-// Regex pattern for Vercel URLs
-const vercelUrlPattern = /^https:\/\/(.+\.)?vercel\.app$/;
-
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (server-to-server, mobile apps, curl)
     if (!origin) return callback(null, true);
 
-    // Check if origin matches allowed list
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-
-    // Check if origin matches Vercel pattern
-    if (vercelUrlPattern.test(origin)) return callback(null, true);
-
-    // Allow in development
-    if (process.env.NODE_ENV === 'development') {
+    // Allow all Vercel preview deployments too
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.endsWith(".vercel.app")       
+    ) {
       return callback(null, true);
     }
 
-    console.log("CORS blocked origin:", origin);
-    return callback(new Error("Not allowed by CORS"));
+    console.log("Blocked origin:", origin);
+    return callback(new Error("Not allowed by CORS")); // send actual error
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
-  credentials: false,
-  preflightContinue: false,
-  optionsSuccessStatus: 200,
-  maxAge: 86400 // 24 hours
-}));
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  credentials: true,
+};
 
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
