@@ -4,7 +4,7 @@ import QuizAttempt from '../../models/QuizAttempt.model.js';
 import Winner from '../../models/Winner.model.js';
 import Subscription from '../../models/Subscription.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
+import { ApiResponse } from '../../utils/apiResponse.js';
 
 export const getAdminDashboard = async (req, res) => {
   try {
