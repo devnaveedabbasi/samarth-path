@@ -209,8 +209,8 @@ export class WinnerService {
 
       const announcementTitle = '🏆 Weekly Winners Announced!';
       const announcementBody = rank1Winner
-        ? `${rank1Winner.userName} ne Week ${lastWeek.weekNumber} mein ${rank1Winner.score} correct answers ke saath Rank 1 haasil kiya!`
-        : `Week ${lastWeek.weekNumber} ke winners announce ho gaye! App mein dekho.`;
+        ? `${rank1Winner.userName} achieved Rank 1 in Week ${lastWeek.weekNumber} with ${rank1Winner.score} correct answers!`
+        : `Week ${lastWeek.weekNumber} winners have been announced! Check the app for details.`;
 
       // Bulk DB notifications
       const bulkNotifications = allUsers.map(user => ({

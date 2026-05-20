@@ -38,20 +38,42 @@ export const sendEmail = async (to, subject, html) => {
 };
 
 /**
- * Send verification email function
+ * Send verification email function (overloaded - handles both token and custom HTML)
  * @param {string} to - User's email
- * @param {string} token - Verification token
+ * @param {string} tokenOrSubject - Verification token OR email subject
+ * @param {string} htmlContent - HTML content (optional, for custom emails)
  */
-export const sendVerificationEmail = async (to, token) => {
+export const sendVerificationEmail = async (to, tokenOrSubject, htmlContent = null) => {
+    // If htmlContent is provided, use custom email mode (for winner emails, etc.)
+    if (htmlContent) {
+        const mailOptions = {
+            from: `"Samarth Path" <${config.email.user}>`,
+            to: to,
+            subject: tokenOrSubject,
+            html: htmlContent,
+        };
+
+        try {
+            await transporter.sendMail(mailOptions);
+            console.log(`Custom email sent to: ${to}`);
+            return true;
+        } catch (error) {
+            console.error("Email sending failed:", error);
+            throw new Error(`Could not send email: ${error.message}`);
+        }
+    }
+
+    // Otherwise, use standard verification email mode
+    const token = tokenOrSubject;
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
 
     const mailOptions = {
-        from: `"Support Team" <${config.email.user}>`,
+        from: `"Samarth Path" <${config.email.user}>`,
         to: to,
         subject: 'Verify Your Email Address',
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
-                <h2 style="color: #333;">Welcome to our Platform!</h2>
+                <h2 style="color: #333;">Welcome to Samarth Path!</h2>
                 <p>Thanks for signing up. Please verify your email to get started.</p>
                 <div style="text-align: center; margin: 30px 0;">
                     <a href="${verificationUrl}" 

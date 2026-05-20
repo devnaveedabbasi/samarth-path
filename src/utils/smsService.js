@@ -1,4 +1,5 @@
 import axios from 'axios';
+
 export async function sendOtpSms(phone, otp) {
   try {
     const response = await axios.get(
@@ -6,7 +7,7 @@ export async function sendOtpSms(phone, otp) {
       {
         params: {
           authorization: process.env.FAST2SMS_API_KEY,
-          route: "q",           // quick route — verification nahi chahiye
+          route: "q",                         
           message: `Your OTP is ${otp}. Valid for 5 minutes.`,
           language: "english",
           flash: 0,

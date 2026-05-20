@@ -239,14 +239,27 @@ export async function getWinners(req, res) {
     isTopThree: index < 3
   }));
 
-  const lastWeekTop3 = lastWeekAnnounced.map(w => ({
-    rank: w.rank,
-    score: w.score,
-    userId: w.userId?._id,
-    userName: w.userId?.name,
-    profilePicture: w.userId?.profilePicture,
-    isTopThree: true
-  }));
+  // ── Last week top3: Use Winner collection if available, else calculate from attempts ──
+  let lastWeekTop3 = [];
+  
+  if (lastWeekAnnounced.length > 0) {
+    // If official winners exist, use them
+    lastWeekTop3 = lastWeekAnnounced.map(w => ({
+      rank: w.rank,
+      score: w.score,
+      userId: w.userId?._id,
+      userName: w.userId?.name,
+      profilePicture: w.userId?.profilePicture,
+      firstAttemptTime: w.createdAt,
+      isTopThree: true
+    }));
+  } else {
+    // Fallback: Calculate top 3 from all participants (same as current week logic)
+    lastWeekTop3 = lastWeekAllUsers.slice(0, 3).map(user => ({
+      ...user,
+      isTopThree: true
+    }));
+  }
 
   res.status(200).json(
     new ApiResponse(

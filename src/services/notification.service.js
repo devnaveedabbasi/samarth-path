@@ -216,28 +216,149 @@ const unlockMoment = moment.tz(
    */
   static async sendWinnerEmail(email, name, rank, score, weekNumber) {
     const rankEmoji = rank === 1 ? '🏆' : rank === 2 ? '🥈' : '🥉';
-    const subject = `${rankEmoji} You're a Weekly Quiz Winner!`;
+    const rankTitle = rank === 1 ? 'CHAMPION' : rank === 2 ? 'RUNNER-UP' : 'THIRD PLACE';
+    const rankColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : '#CD7F32';
+    
+    const subject = `${rankEmoji} Congratulations! You're a Samarth Path Weekly Winner - Rank #${rank}`;
 
     const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
-        <h2 style="color: #27ae60; text-align: center;">${rankEmoji} Congratulations ${name}!</h2>
-        <p style="font-size: 16px; text-align: center;">You achieved <strong>Rank #${rank}</strong> this week</p>
-        
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
-          <p style="font-size: 14px; margin: 5px 0;">Total Score</p>
-          <h1 style="margin: 10px 0; font-size: 48px;">${score}</h1>
-          <p style="font-size: 12px; margin: 5px 0;">Week ${weekNumber}</p>
-        </div>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { margin: 0; padding: 0; background-color: #f5f5f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+          .container { max-width: 600px; margin: 0 auto; background-color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; text-align: center; }
+          .logo { font-size: 28px; font-weight: bold; margin-bottom: 10px; }
+          .emoji { font-size: 48px; display: block; margin: 10px 0; }
+          .rank-badge { 
+            background-color: ${rankColor}; 
+            color: white; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 20px; 
+            text-align: center; 
+            font-size: 24px; 
+            font-weight: bold;
+          }
+          .content { padding: 30px; line-height: 1.6; color: #333; }
+          .greeting { font-size: 20px; font-weight: bold; margin-bottom: 15px; color: #667eea; }
+          .stats { background-color: #f9f9f9; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0; border-radius: 4px; }
+          .stat-item { display: flex; justify-content: space-between; margin: 10px 0; font-size: 16px; }
+          .stat-label { font-weight: 600; color: #555; }
+          .stat-value { font-weight: bold; color: #667eea; font-size: 18px; }
+          .cta-button { 
+            display: inline-block; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            padding: 12px 30px; 
+            text-decoration: none; 
+            border-radius: 5px; 
+            margin: 20px auto; 
+            display: block; 
+            width: fit-content;
+            font-weight: bold;
+            cursor: pointer;
+          }
+          .motivational { 
+            background-color: #e8f5e9; 
+            border-left: 4px solid #4caf50; 
+            padding: 15px; 
+            margin: 20px 0; 
+            border-radius: 4px;
+            color: #2e7d32;
+          }
+          .footer { 
+            background-color: #f5f5f5; 
+            padding: 20px; 
+            text-align: center; 
+            font-size: 12px; 
+            color: #888; 
+            border-top: 1px solid #ddd;
+          }
+          .divider { height: 1px; background-color: #ddd; margin: 20px 0; }
+          .prize-info { 
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%); 
+            color: #333; 
+            padding: 15px; 
+            border-radius: 5px; 
+            margin: 15px 0;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <!-- Header -->
+          <div class="header">
+            <div class="logo">🎓 Samarth Path</div>
+            <div class="emoji">${rankEmoji}</div>
+            <h1 style="margin: 10px 0; font-size: 28px;">CONGRATULATIONS!</h1>
+            <p style="margin: 10px 0; font-size: 16px;">You're a Weekly Quiz Winner</p>
+          </div>
 
-        <p style="text-align: center; font-size: 14px;">Keep up the great work! Challenge yourself next week to rank higher.</p>
-        
-        <hr style="border: none; border-top: 1px solid #eee;" />
-        <p style="font-size: 12px; color: #888;">Thank you for being part of our community!</p>
-      </div>
+          <!-- Rank Badge -->
+          <div class="rank-badge">
+            RANK #${rank} - ${rankTitle}
+          </div>
+
+          <!-- Content -->
+          <div class="content">
+            <div class="greeting">Hello ${name},</div>
+            
+            <p>🎉 Amazing news! You've secured <strong>Rank #${rank}</strong> in the Samarth Path Weekly Quiz Challenge (Week ${weekNumber})!</p>
+
+            <!-- Stats -->
+            <div class="stats">
+              <div class="stat-item">
+                <span class="stat-label">Your Score:</span>
+                <span class="stat-value">${score} Points</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Week Number:</span>
+                <span class="stat-value">Week ${weekNumber}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Achievement:</span>
+                <span class="stat-value">${rankTitle}</span>
+              </div>
+            </div>
+
+            <!-- Prize Info -->
+            <div class="prize-info">
+              <strong>🎁 Reward Unlocked!</strong><br>
+              <small>Check your account for exclusive prizes and badges</small>
+            </div>
+
+            <!-- Motivational Message -->
+            <div class="motivational">
+              <strong>💪 Keep it up!</strong> Challenge yourself next week to climb the leaderboard even higher. Every correct answer brings you closer to becoming the champion!
+            </div>
+
+
+            <div class="divider"></div>
+
+            <p style="font-size: 14px; color: #666;">
+              Thank you for being an active member of the Samarth Path community! Your dedication and effort inspire us every day.
+            </p>
+          </div>
+
+          <!-- Footer -->
+          <div class="footer">
+            <p style="margin: 0;">📧 Samarth Path - Weekly Quiz Winners Announcement</p>
+            <p style="margin: 5px 0;">This is an automated message. Please don't reply to this email.</p>
+            <p style="margin: 10px 0; color: #aaa;">© 2026 Samarth Path. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
     `;
 
     try {
       await sendVerificationEmail(email, subject, html);
+      console.log(`✅ Winner email sent to: ${email} (Rank #${rank})`);
     } catch (error) {
       console.error('Error sending winner email:', error);
     }

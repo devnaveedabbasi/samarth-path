@@ -482,7 +482,7 @@ FRONTEND_URL=http://localhost:3000
 
 ---
 
-## 🚀 Current Status
+##  Current Status
 
 | Feature | Status | Notes |
 |---------|--------|-------|

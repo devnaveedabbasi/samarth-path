@@ -75,7 +75,7 @@ export async function register(req, res) {
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
   const otp = generateNumericOtp(6);
-
+  
   const user = await User.create({
     name,
     phone,
@@ -100,7 +100,7 @@ export async function register(req, res) {
 
   user.subscriptionID = subscription._id;
   await user.save();
-
+  
   // await sendOtpSms(phone, otp);
 
   res.status(201).json(
