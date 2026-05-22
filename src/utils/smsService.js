@@ -7,8 +7,10 @@ export async function sendOtpSms(phone, otp) {
       {
         params: {
           authorization: process.env.FAST2SMS_API_KEY,
-          route: "q",                         
-          message: `Your OTP is ${otp}. Valid for 5 minutes.`,
+          route: "dlt",
+          sender_id: process.env.FAST2SMS_SENDER_ID,  // Add this
+          message: process.env.FAST2SMS_MESSAGE_ID,    // Use template ID, not raw text
+          variables_values: otp,                       // Pass OTP as variable
           language: "english",
           flash: 0,
           numbers: phone,

@@ -17,7 +17,25 @@ import { sendContentPublishedNotification } from '../notification.controller.js'
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
+const reencodeVideo = (inputPath) => {
+  return new Promise((resolve, reject) => {
+    const outputPath = inputPath.replace(/\.mp4$/i, '_encoded.mp4')
 
+    ffmpeg(inputPath)
+      .outputOptions([
+        '-c:v libx264',
+        '-g 30',
+        '-keyint_min 30',
+        '-sc_threshold 0',
+        '-movflags +faststart',
+        '-c:a aac'
+      ])
+      .output(outputPath)
+      .on('end', () => resolve(outputPath))
+      .on('error', reject)
+      .run()
+  })
+}
 
 // ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -58,7 +76,7 @@ export async function createTextContent(req, res) {
     throw new ApiError(400, `Text content for this date already exists.`);
   }
 
-  const imageUrl = req.file ? req.file.path : null; 
+  const imageUrl = req.file ? req.file.path : null;
   const image = imageUrl ? await uploadOnS3({
     localFilePath: imageUrl,
     mimetype: req.file.mimetype,
@@ -67,7 +85,7 @@ export async function createTextContent(req, res) {
   }) : null;
 
   // 2. Create Content
-  const content = await Content.create({ 
+  const content = await Content.create({
     contentType: 'text',
     unlocksAt: unlocksAt || '08:00',
     // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
@@ -76,7 +94,7 @@ export async function createTextContent(req, res) {
     textContent: { title, description, label, image: image ? image.secure_url : null },
     createdBy: adminId
   });
-  
+
   await sendContentPublishedNotification(content);
 
   res.status(201).json(
@@ -166,7 +184,7 @@ export async function updateTextContent(req, res) {
   if (label) updateData["textContent.label"] = label;
   if (unlocksAt) updateData.unlocksAt = unlocksAt;
 
- 
+
   if (req.file) {
     const upload = await uploadOnS3({
       localFilePath: req.file.path,
@@ -467,9 +485,8 @@ export async function createVideoContent(req, res) {
     throw new ApiError(400, "Could not verify video duration.");
   }
 
-const videoDate = date ? new Date(date) : new Date();
-
-videoDate.setUTCHours(0, 0, 0, 0);
+  const videoDate = date ? new Date(date) : new Date();
+  videoDate.setUTCHours(0, 0, 0, 0);
 
   const existingVideo = await Content.findOne({
     date: videoDate,
@@ -483,9 +500,31 @@ videoDate.setUTCHours(0, 0, 0, 0);
     throw new ApiError(400, `Video content for ${videoDate.toDateString()} already exists.`);
   }
 
+  const reencodeVideo = (inputPath) => {
+    return new Promise((resolve, reject) => {
+      const outputPath = inputPath.replace(/\.mp4$/i, '_encoded.mp4')
+      ffmpeg(inputPath)
+        .outputOptions([
+          '-c:v libx264',
+          '-g 30',
+          '-keyint_min 30',
+          '-sc_threshold 0',
+          '-movflags +faststart',
+          '-c:a aac'
+        ])
+        .output(outputPath)
+        .on('end', () => resolve(outputPath))
+        .on('error', reject)
+        .run()
+    })
+  }
+
   try {
+    // ✅ Pehle encode karo
+    const encodedVideoPath = await reencodeVideo(videoLocalPath)
+
     const videoUpload = await uploadOnS3({
-      localFilePath: videoLocalPath,
+      localFilePath: encodedVideoPath,  // ✅ encoded file upload hogi
       mimetype: req.files?.video?.[0]?.mimetype,
       folder: "videos",
       originalname: req.files?.video?.[0]?.originalname,
@@ -497,21 +536,26 @@ videoDate.setUTCHours(0, 0, 0, 0);
       folder: "thumbnails",
       originalname: req.files?.image?.[0]?.originalname,
     });
+
+    // ✅ Dono files delete karo — original aur encoded
+    if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+    if (fs.existsSync(encodedVideoPath)) fs.unlinkSync(encodedVideoPath);
+
     if (!videoUpload || !thumbnailUpload) {
       throw new ApiError(500, "Failed to upload files to S3.");
     }
     console.log("Video uploaded to S3:", videoUpload);
 
     await Content.updateOne(
-  {
-    contentType: "video",
-    date: videoDate,
-    isDeleted: false
-  },
-  {
-    $set: { isDeleted: true }
-  }
-);
+      {
+        contentType: "video",
+        date: videoDate,
+        isDeleted: false
+      },
+      {
+        $set: { isDeleted: true }
+      }
+    );
 
     const content = await Content.create({
       contentType: "video",
@@ -582,15 +626,14 @@ export async function getVideoById(req, res) {
 export async function updateVideoContent(req, res) {
   const { contentId: id } = req.params;
   const { title, description, unlocksAt, hasListenOnlyMode } = req.body || {};
-  // Date updates are not allowed — only today's content can be updated
 
-  // 1. Find the content
+  // 1. Content find karo
   const content = await Content.findOne({ _id: id, contentType: "video", isDeleted: { $ne: true } });
   if (!content) {
     throw new ApiError(404, "Video content not found.");
   }
 
-  // 2. Only today's UNLOCKED content can be updated
+  // 2. Sirf aaj ki content update ho sakti hai
   const now = moment().tz("Asia/Karachi");
   const startOfDay = now.clone().startOf('day').toDate();
   const endOfDay = now.clone().endOf('day').toDate();
@@ -600,13 +643,14 @@ export async function updateVideoContent(req, res) {
     throw new ApiError(400, "Today's video content can only be updated.");
   }
 
-
   // 3. File Paths
   const videoLocalPath = req.files?.video?.[0]?.path;
   const thumbnailLocalPath = req.files?.image?.[0]?.path;
 
-  // 4. Duration Validation
+  // 4. Duration Validation + Re-encode
   let durationSeconds = content.videoContent.durationSeconds;
+  let encodedVideoPath = null;
+
   if (videoLocalPath) {
     try {
       const getVideoDuration = (filePath) => new Promise((resolve, reject) => {
@@ -622,10 +666,34 @@ export async function updateVideoContent(req, res) {
         if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
         throw new ApiError(400, "Video duration exceeds 7 minutes limit.");
       }
+
+      // Duration valid — ab re-encode karo
+      const reencodeVideo = (inputPath) => {
+        return new Promise((resolve, reject) => {
+          const outputPath = inputPath.replace(/\.mp4$/i, '_encoded.mp4')
+          ffmpeg(inputPath)
+            .outputOptions([
+              '-c:v libx264',
+              '-g 30',
+              '-keyint_min 30',
+              '-sc_threshold 0',
+              '-movflags +faststart',
+              '-c:a aac'
+            ])
+            .output(outputPath)
+            .on('end', () => resolve(outputPath))
+            .on('error', reject)
+            .run()
+        })
+      }
+
+      encodedVideoPath = await reencodeVideo(videoLocalPath);
+
     } catch (error) {
       if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+      if (encodedVideoPath && fs.existsSync(encodedVideoPath)) fs.unlinkSync(encodedVideoPath);
       if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
-      throw new ApiError(400, "Could not verify video duration.");
+      throw new ApiError(400, error.message || "Could not verify video duration.");
     }
   }
 
@@ -633,13 +701,18 @@ export async function updateVideoContent(req, res) {
   let videoUrl = content.videoContent.videoUrl;
   let thumbnailUrl = content.videoContent.thumbnail;
 
-  if (videoLocalPath) {
+  if (videoLocalPath && encodedVideoPath) {
     const videoUpload = await uploadOnS3({
-      localFilePath: videoLocalPath,
+      localFilePath: encodedVideoPath,
       mimetype: req.files?.video?.[0]?.mimetype,
       folder: "videos",
       originalname: req.files?.video?.[0]?.originalname,
     });
+
+    // Dono files delete karo
+    if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
+    if (fs.existsSync(encodedVideoPath)) fs.unlinkSync(encodedVideoPath);
+
     if (!videoUpload) throw new ApiError(500, "Failed to upload video to AWS S3.");
     videoUrl = videoUpload.secure_url;
   }
@@ -655,7 +728,7 @@ export async function updateVideoContent(req, res) {
     thumbnailUrl = thumbnailUpload.secure_url;
   }
 
-  // 6. Update — date cannot be changed, only submitted fields will be updated
+  // 6. Update
   const updateData = {
     unlocksAt: unlocksAt || content.unlocksAt,
     "videoContent.title": title || content.videoContent.title,
@@ -693,13 +766,6 @@ export async function deleteVideoContent(req, res) {
 
   res.status(200).json(new ApiResponse(200, null, 'Video content deleted successfully.'));
 }
-
-
-
-
-
-
-
 
 
 

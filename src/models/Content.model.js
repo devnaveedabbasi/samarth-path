@@ -26,15 +26,15 @@ const contentSchema = new mongoose.Schema({
 
   // For Text Content
   textContent: {
-    title: String,
-    description: String,
+    title: { type: String, maxlength: 200 },
+    description: { type: String, maxlength: 1000 },
     label: String,
     image: String,
   },
 
   // For Quiz Content
   quizContent: {
-    title: String,
+    title: { type: String, maxlength: 200 },
     question: String,
     options: [{
       id: String,
@@ -47,13 +47,16 @@ const contentSchema = new mongoose.Schema({
 
   // For Video Content
   videoContent: {
-    title: String,
+    title: { type: String, maxlength: 200 },
     videoUrl: String,
     durationMinutes: Number,
     thumbnail: String,
     isAutoMute: { type: Boolean, default: true },
     hasListenOnlyMode: { type: Boolean, default: true },
-    description: String
+    description: {
+      type: String,
+      maxlength: 1000
+    },
   },
 
   createdBy: {
