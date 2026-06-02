@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { CLIENT_RENEG_LIMIT } from 'tls';
 
 const getRazorpayInstance = () => {
   const keyId = process.env.RAZORPAY_KEY_ID?.trim();
@@ -356,12 +357,50 @@ export async function getSubscriptionStatus(req, res) {
   );
 }
 
+// export const testRazorpayOrder = async (req, res) => {
+//   try {
+//     const razorpay = new Razorpay({
+//       key_id: process.env.RAZORPAY_KEY_ID,
+//       key_secret: process.env.RAZORPAY_KEY_SECRET,
+//     });
+
+//     const order = await razorpay.orders.create({
+//       amount: 100, // ₹1
+//       currency: "INR",
+//       receipt: `rcpt_${Date.now()}`,
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       order,
+//     });
+//   } catch (err) {
+//     console.log("RAZORPAY TEST ERROR:", err);
+
+//     return res.status(500).json({
+//       success: false,
+//       error: err,
+//     });
+//   }
+// };
+
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
 export const testRazorpayOrder = async (req, res) => {
   try {
-    const razorpay = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
-    });
+    if (
+      !process.env.RAZORPAY_KEY_ID ||
+      !process.env.RAZORPAY_KEY_SECRET
+    ) {
+      return res.status(500).json({
+        success: false,
+        message: "Razorpay credentials missing",
+      });
+    }
 
     const order = await razorpay.orders.create({
       amount: 100, // ₹1
@@ -373,12 +412,16 @@ export const testRazorpayOrder = async (req, res) => {
       success: true,
       order,
     });
-  } catch (err) {
-    console.log("RAZORPAY TEST ERROR:", err);
+  } catch (error) {
+    const razorpayError = error?.error || error;
 
-    return res.status(500).json({
+    return res.status(error?.statusCode || 500).json({
       success: false,
-      error: err,
+      statusCode: error?.statusCode || 500,
+      code: razorpayError?.code,
+      description: razorpayError?.description || error.message,
+      field: razorpayError?.field,
     });
   }
 };
+

@@ -15,7 +15,7 @@
     "@aws-sdk/client-s3": "^3.1045.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
-    "axios": "^1.16.0",
+    "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
     "cors": "^2.8.6",
