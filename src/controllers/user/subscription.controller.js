@@ -1,4 +1,4 @@
-// controllers/user/subscription.controller.js
+
 import Subscription from '../../models/Subscription.model.js';
 import User from '../../models/User.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
@@ -7,52 +7,78 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
 const getRazorpayInstance = () => {
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-    throw new ApiError(500, 'Payment gateway not configured.');
+  const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+  const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+
+  if (!keyId || !keySecret) {
+    console.error('❌ Razorpay credentials missing');
+
+    throw new ApiError(
+      500,
+      'Payment gateway credentials are not configured.'
+    );
   }
+
+  console.log('✅ Razorpay Initialized');
+
   return new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
+    key_id: keyId,
+    key_secret: keySecret,
   });
 };
 
+// ==============================
+// CREATE SUBSCRIPTION ORDER
+// ==============================
 export async function createSubscriptionOrder(req, res) {
   const userId = req.user._id;
-
   const paymentMethod = req.body.paymentMethod;
 
   if (!paymentMethod || !['upi', 'card'].includes(paymentMethod)) {
     throw new ApiError(400, 'Valid payment method is required.');
   }
 
+
   const user = await User.findById(userId);
+
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
+  console.log(' User found:', user);
 
-  // Check if user already has an active subscription
-  if (user.isSubscribed && user.subscriptionID) {
-    const existingSub = await Subscription.findById(user.subscriptionID);
-    if (existingSub && existingSub.status === 'active') {
-      throw new ApiError(400, 'User already has an active subscription.');
-    }
+  // Prevent duplicate active subscription
+  const existingSubscription = await Subscription.findOne({
+    userId,
+    status: 'active',
+  });
+
+  if (existingSubscription) {
+    throw new ApiError(
+      400,
+      'User already has an active subscription.'
+    );
   }
 
-  const amount = 19900; 
+  const amount = 19900; // ₹199 in paise
   const currency = 'INR';
 
   const options = {
     amount,
     currency,
-    receipt: `receipt_${userId}_${Date.now()}`,
-    payment_capture: 1,
+    receipt: `rcpt_${Math.floor(Date.now() / 1000)}`, notes: {
+      userId: userId.toString(),
+      plan: 'Monthly Basic',
+    },
   };
 
   try {
     const razorpay = getRazorpayInstance();
+
     const order = await razorpay.orders.create(options);
 
-    res.status(200).json(
+    console.log('✅ Razorpay Order Created:', order.id);
+
+    return res.status(200).json(
       new ApiResponse(
         200,
         {
@@ -64,86 +90,53 @@ export async function createSubscriptionOrder(req, res) {
         'Subscription order created successfully.'
       )
     );
-  } catch (error) {
-    throw new ApiError(500, 'Failed to create order.');
+  }
+
+  catch (error) {
+    console.error('❌ FULL RAZORPAY ERROR');
+
+    console.error({
+      statusCode: error?.statusCode,
+      message: error?.message,
+      description: error?.error?.description,
+      field: error?.error?.field,
+      source: error?.error?.source,
+      step: error?.error?.step,
+      reason: error?.error?.reason,
+      metadata: error?.error?.metadata,
+      raw: error,
+    });
+
+    throw new ApiError(
+      500,
+      error?.error?.description ||
+      error?.message ||
+      'Failed to create payment order'
+    );
   }
 }
 
-// export async function verifyPayment(req, res) {
-//   const userId = req.user._id;
-//   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentMethod } = req.body;
-
-//   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !paymentMethod) {
-//     throw new ApiError(400, 'Payment verification data is required.');
-//   }
-
-//   const user = await User.findById(userId);
-//   if (!user) {
-//     throw new ApiError(404, 'User not found.');
-//   }
-
-//   // Verify signature
-//   const sign = razorpay_order_id + '|' + razorpay_payment_id;
-//   const expectedSign = crypto
-//     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-//     .update(sign.toString())
-//     .digest('hex');
-
-//   if (razorpay_signature !== expectedSign) {
-//     throw new ApiError(400, 'Payment verification failed.');
-//   }
-
-//   // Create or update subscription
-//   const now = new Date();
-//   const expiryDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
-
-//   let subscription = await Subscription.findOne({ userId });
-//   if (!subscription) {
-//     subscription = new Subscription({
-//       userId,
-//       planName: 'Monthly Basic',
-//       price: 199,
-//       status: 'active',
-//       startDate: now,
-//       expiryDate,
-//       paymentMethod,
-//       paymentRef: razorpay_payment_id,
-//     });
-//   } else {
-//     subscription.status = 'active';
-//     subscription.startDate = now;
-//     subscription.expiryDate = expiryDate;
-//     subscription.paymentMethod = paymentMethod;
-//     subscription.paymentRef = razorpay_payment_id;
-//   }
-
-//   await subscription.save();
-
-//   // Update user
-//   user.isSubscribed = true;
-//   user.subscriptionID = subscription._id;
-//   await user.save();
-
-//   res.status(200).json(
-//     new ApiResponse(
-//       200,
-//       {
-//         subscriptionId: subscription._id,
-//         status: subscription.status,
-//         expiryDate: subscription.expiryDate,
-//       },
-//       'Payment verified and subscription activated.'
-//     )
-//   );
-// }
-
-
+// ==============================
+// VERIFY PAYMENT
+// ==============================
 export async function verifyPayment(req, res) {
   const userId = req.user._id;
-  const { paymentMethod } = req.body;
 
-  if (!paymentMethod || !['upi', 'card'].includes(paymentMethod)) {
-    throw new ApiError(400, 'Valid payment method is required.');
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+  } = req.body;
+
+  if (
+    !razorpay_order_id ||
+    !razorpay_payment_id ||
+    !razorpay_signature
+  ) {
+    throw new ApiError(
+      400,
+      'Payment verification data is required.'
+    );
   }
 
   const user = await User.findById(userId);
@@ -152,13 +145,75 @@ export async function verifyPayment(req, res) {
     throw new ApiError(404, 'User not found.');
   }
 
-  // 30 days subscription
+  // ==============================
+  // VERIFY SIGNATURE
+  // ==============================
+  const generatedSignature = crypto
+    .createHmac(
+      'sha256',
+      process.env.RAZORPAY_KEY_SECRET
+    )
+    .update(
+      `${razorpay_order_id}|${razorpay_payment_id}`
+    )
+    .digest('hex');
+
+  if (generatedSignature !== razorpay_signature) {
+    throw new ApiError(400, 'Payment verification failed.');
+  }
+
+  const razorpay = getRazorpayInstance();
+
+  // ==============================
+  // FETCH PAYMENT FROM RAZORPAY
+  // ==============================
+  const payment = await razorpay.payments.fetch(
+    razorpay_payment_id
+  );
+
+  if (!payment) {
+    throw new ApiError(404, 'Payment not found.');
+  }
+
+  // ==============================
+  // VALIDATE PAYMENT
+  // ==============================
+  if (payment.status !== 'captured') {
+    throw new ApiError(
+      400,
+      'Payment is not captured.'
+    );
+  }
+
+  if (payment.amount !== 19900) {
+    throw new ApiError(
+      400,
+      'Invalid payment amount.'
+    );
+  }
+
+  if (payment.currency !== 'INR') {
+    throw new ApiError(
+      400,
+      'Invalid payment currency.'
+    );
+  }
+
+  // ==============================
+  // SUBSCRIPTION DATES
+  // ==============================
   const now = new Date();
+
   const expiryDate = new Date(
     now.getTime() + 30 * 24 * 60 * 60 * 1000
   );
 
-  let subscription = await Subscription.findOne({ userId });
+  // ==============================
+  // CREATE / UPDATE SUBSCRIPTION
+  // ==============================
+  let subscription = await Subscription.findOne({
+    userId,
+  });
 
   if (!subscription) {
     subscription = new Subscription({
@@ -168,8 +223,8 @@ export async function verifyPayment(req, res) {
       status: 'active',
       startDate: now,
       expiryDate,
-      paymentMethod,
-      paymentRef: 'TEST_PAYMENT',
+      paymentMethod: payment.method,
+      paymentRef: razorpay_payment_id,
     });
   } else {
     subscription.planName = 'Monthly Basic';
@@ -177,19 +232,21 @@ export async function verifyPayment(req, res) {
     subscription.status = 'active';
     subscription.startDate = now;
     subscription.expiryDate = expiryDate;
-    subscription.paymentMethod = paymentMethod;
-    subscription.paymentRef = 'TEST_PAYMENT';
+    subscription.paymentMethod = payment.method;
+    subscription.paymentRef = razorpay_payment_id;
   }
 
   await subscription.save();
 
-  // Update user
+  // ==============================
+  // UPDATE USER
+  // ==============================
   user.isSubscribed = true;
   user.subscriptionID = subscription._id;
 
   await user.save();
 
-  res.status(200).json(
+  return res.status(200).json(
     new ApiResponse(
       200,
       {
@@ -197,62 +254,93 @@ export async function verifyPayment(req, res) {
         status: subscription.status,
         expiryDate: subscription.expiryDate,
       },
-      'Subscription activated successfully.'
+      'Payment verified and subscription activated.'
     )
   );
 }
 
+// ==============================
+// GET SUBSCRIPTION STATUS
+// ==============================
 export async function getSubscriptionStatus(req, res) {
   const userId = req.user._id;
 
-  const user = await User.findById(userId).populate('subscriptionID');
+  const user = await User.findById(userId).populate(
+    'subscriptionID'
+  );
+
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
 
-  if (!user.isSubscribed || !user.subscriptionID) {
-    // Create trial subscription if not exists
-    const trialEndDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    let subscription = await Subscription.findOne({ userId });
-    if (!subscription) {
-      subscription = new Subscription({
-        userId,
-        status: 'trial',
-        expiryDate: trialEndDate,
-      });
-      await subscription.save();
-      user.subscriptionID = subscription._id;
-      await user.save();
-    }
+  // ==============================
+  // CREATE TRIAL
+  // ==============================
+  if (!user.subscriptionID) {
+    const now = new Date();
+
+    const trialEndDate = new Date(
+      now.getTime() + 3 * 24 * 60 * 60 * 1000
+    );
+
+    const subscription = new Subscription({
+      userId,
+      status: 'trial',
+      trialEndDate,
+    });
+
+    await subscription.save();
+
+    user.subscriptionID = subscription._id;
+
+    await user.save();
+
     return res.status(200).json(
       new ApiResponse(
         200,
         {
           isSubscribed: false,
           status: subscription.status,
-          expiryDate: subscription.expiryDate,
-          trialEndDate: subscription.trialEndDate,
+          trialEndDate:
+            subscription.trialEndDate,
         },
-        'Subscription status retrieved.'
+        'Trial subscription activated.'
       )
     );
   }
 
   const subscription = user.subscriptionID;
 
-  // Check if expired
   const now = new Date();
-  if (subscription.status === 'trial' && subscription.trialEndDate < now) {
+
+  // ==============================
+  // HANDLE EXPIRY
+  // ==============================
+  if (
+    subscription.status === 'trial' &&
+    subscription.trialEndDate &&
+    subscription.trialEndDate < now
+  ) {
     subscription.status = 'expired';
-    await subscription.save();
-  } else if (subscription.status === 'active' && subscription.expiryDate < now) {
-    subscription.status = 'expired';
-    user.isSubscribed = false;
-    await user.save();
+
     await subscription.save();
   }
 
-  res.status(200).json(
+  if (
+    subscription.status === 'active' &&
+    subscription.expiryDate &&
+    subscription.expiryDate < now
+  ) {
+    subscription.status = 'expired';
+
+    user.isSubscribed = false;
+
+    await subscription.save();
+
+    await user.save();
+  }
+
+  return res.status(200).json(
     new ApiResponse(
       200,
       {
@@ -267,3 +355,30 @@ export async function getSubscriptionStatus(req, res) {
     )
   );
 }
+
+export const testRazorpayOrder = async (req, res) => {
+  try {
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+
+    const order = await razorpay.orders.create({
+      amount: 100, // ₹1
+      currency: "INR",
+      receipt: `rcpt_${Date.now()}`,
+    });
+
+    return res.status(200).json({
+      success: true,
+      order,
+    });
+  } catch (err) {
+    console.log("RAZORPAY TEST ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      error: err,
+    });
+  }
+};

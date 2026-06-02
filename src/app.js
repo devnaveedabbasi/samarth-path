@@ -9,11 +9,19 @@ import requestLogger from "./middleware/requestLogger.js";
 import "./utils/cronJobs.js";
 import errorHandler from "./middleware/errorHandler.js";
 import { ApiError } from "./utils/errorHandler.js";
+import { validateAllConfigs } from "./utils/validateConfig.js";
 
 const app = express();
 
 const server = createServer(app);
+import 'dotenv/config';
 
+
+console.log('🔑 ENV CHECK:', {
+  KEY_ID: process.env.RAZORPAY_KEY_ID,
+  SECRET_PREVIEW: process.env.RAZORPAY_KEY_SECRET?.slice(0, 4) + '...',
+  ENV_FILE: process.cwd()
+});
 // CORS Configuration - Allow multiple Vercel deployment URLs and local development
 const allowedOrigins = [
   "http://localhost:3000",
@@ -65,6 +73,9 @@ app.use((req, res, next) => {
 
 // Global error handler — MUST have 4 params
 app.use(errorHandler);
+
+// Validate critical configurations on startup
+validateAllConfigs();
 
 connectDb();
 

@@ -7,11 +7,11 @@ import { authMiddleware as authenticateToken, authorize as requireRole } from '.
 const router = Router();
 
 // All routes require authentication
+router.post("/razorpay-test", subscriptionController.testRazorpayOrder);
 router.use(authenticateToken);
 router.use(requireRole('user'));
 
 router.post('/create-order', asyncHandler(subscriptionController.createSubscriptionOrder));
 router.post('/verify-payment', asyncHandler(subscriptionController.verifyPayment));
 router.get('/status', asyncHandler(subscriptionController.getSubscriptionStatus));
-
 export default router;
