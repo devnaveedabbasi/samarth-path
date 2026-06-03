@@ -1,4 +1,4 @@
-﻿import bcrypt from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 import User from '../../models/User.model.js';
 import Subscription from '../../models/Subscription.model.js';
 import { sendOtpSms } from '../../utils/smsService.js';
@@ -11,6 +11,8 @@ import { uploadOnS3 } from '../../utils/s3.js';
 const SALT_ROUNDS = 10;
 const OTP_TTL_MS = 10 * 60 * 1000;
 // const OTP_TTL_MS = 1 * 60 * 1000; // 1 minute
+const TRIAL_DAYS = 3;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const RESEND_COOLDOWN_MS = 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
@@ -95,13 +97,21 @@ export async function register(req, res) {
   });
 
   // Create trial subscription
+  const now = new Date();
+  const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
   const subscription = await Subscription.create({
     userId: user._id,
+    planName: 'Trial',
+    price: 0,
     status: 'trial',
-    expiryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+    startDate: now,
+    expiryDate: trialEndDate,
+    trialStartDate: now,
+    trialEndDate,
   });
 
   user.subscriptionID = subscription._id;
+  user.isSubscribed = false;
   await user.save();
   
 
@@ -244,26 +254,32 @@ export async function login(req, res) {
 
   const now = new Date();
 
-  // TODO: Trial expiry handling - currently we allow login but can restrict access to content in other middleware/controllers based on subscription status. If you want to block login itself after trial expires, uncomment the below code and adjust logic as needed.
-  // if (subscription.status === 'trial' && subscription.trialEndDate < now) {
-  //   subscription.status = 'expired';
-  //   await subscription.save();
-  //   user.isSubscribed = false;
-  //   await user.save();
-  //   throw new ApiError(403, 'Trial period expired. Please subscribe to continue.');
-  // }
-  if (subscription.status === 'active' && subscription.expiryDate < now) {
+  // Auto-expire trial if trialEndDate passed
+  if (subscription.status === 'trial' && subscription.trialEndDate && subscription.trialEndDate < now) {
     subscription.status = 'expired';
     await subscription.save();
     user.isSubscribed = false;
     await user.save();
-    throw new ApiError(403, 'Subscription expired. Please renew.');
   }
 
-  // TODO: Depending on your business logic, you might want to allow users with expired subscriptions to log in but restrict access to content. If you want to block login itself for expired subscriptions, uncomment the below code and adjust logic as needed.
-  // if (subscription.status !== 'trial' && subscription.status !== 'active') {
-  //   throw new ApiError(403, 'Subscription required. Please subscribe.');
-  // }
+  // Auto-expire paid subscription if expiryDate passed
+  if (subscription.status === 'active' && subscription.expiryDate && subscription.expiryDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+  }
+
+  // Sync user state for active subscriptions
+  if (['trial', 'active'].includes(subscription.status)) {
+    user.isSubscribed = true; // Both trial and active get app access
+    user.subscriptionID = subscription._id;
+    await user.save();
+  }
+
+  // NOTE: We do NOT block login for expired users.
+  // The app should check subscriptionStatus and redirect to subscription screen if expired.
+  // Content access is blocked by checkSubscription middleware.
 
   const token = signToken(user._id, user.role);
   user.token = token;
@@ -282,6 +298,9 @@ export async function login(req, res) {
           status: user.status,
           isSubscribed: user.isSubscribed,
           subscriptionStatus: subscription.status,
+          trialEndDate: subscription.trialEndDate || null,
+          expiryDate: subscription.expiryDate || null,
+          planName: subscription.planName || null,
         },
       },
       'Login successful.'

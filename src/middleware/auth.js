@@ -107,7 +107,11 @@ const checkSubscription = async (req, res, next) => {
     if (!subscription) {
       return res.status(403).json({
         success: false,
-        message: 'Subscription not found.'
+        message: 'Subscription not found. Please contact support.',
+        data: {
+          subscriptionStatus: 'none',
+          requiresSubscription: true,
+        }
       });
     }
 
@@ -128,7 +132,13 @@ const checkSubscription = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message:
-          'Trial expired. Please subscribe.'
+          'Your 3-day free trial has expired. Subscribe for ₹199/month to continue.',
+        data: {
+          subscriptionStatus: 'expired',
+          trialEndDate: subscription.trialEndDate,
+          requiresSubscription: true,
+          planPrice: 199,
+        }
       });
     }
 
@@ -147,8 +157,21 @@ const checkSubscription = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message:
-          'Subscription expired. Please renew.'
+          'Your subscription has expired. Renew for ₹199/month to continue.',
+        data: {
+          subscriptionStatus: 'expired',
+          expiryDate: subscription.expiryDate,
+          requiresSubscription: true,
+          planPrice: 199,
+        }
       });
+    }
+
+    // Sync user state for active subscriptions
+    if (['trial', 'active'].includes(subscription.status)) {
+      user.isSubscribed = true;
+      user.subscriptionID = subscription._id;
+      await user.save();
     }
 
     // Block expired/cancelled users
@@ -159,7 +182,12 @@ const checkSubscription = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message:
-          'No active subscription found.'
+          'No active subscription. Subscribe for ₹199/month to access content.',
+        data: {
+          subscriptionStatus: subscription.status,
+          requiresSubscription: true,
+          planPrice: 199,
+        }
       });
     }
 

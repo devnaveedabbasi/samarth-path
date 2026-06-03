@@ -108,41 +108,185 @@ cron.schedule('0 2 * * 0', async () => {
   timezone: TIMEZONE
 });
 
-
+/**
+ * Cron: Trial Expiry Check (every 10 minutes)
+ * - Marks expired trial subscriptions as 'expired'
+ * - Updates user.isSubscribed = false
+ * - Sends push notification when trial expires
+ */
 cron.schedule('*/10 * * * *', async () => {
-  console.log('[CRON] Running Subscription Expiry Check...');
+  console.log('[CRON] Running Trial Subscription Expiry Check...');
 
   try {
     const now = new Date();
 
-    const expiredSubs = await Subscription.find({
+    const expiredTrials = await Subscription.find({
       trialEndDate: { $lte: now },
       status: 'trial'
     });
 
-    if (!expiredSubs.length) {
-      console.log('[CRON] No expired subscriptions found');
+    if (!expiredTrials.length) {
+      console.log('[CRON] No expired trial subscriptions found');
       return;
     }
 
-    for (const sub of expiredSubs) {
+    for (const sub of expiredTrials) {
       sub.status = 'expired';
       await sub.save();
 
       await User.findByIdAndUpdate(sub.userId, {
-        isSubscribed: false,
-        subscriptionID: null
+        isSubscribed: false
       });
 
-      console.log(`[CRON] Expired subscription for user: ${sub.userId}`);
+      // Send expiry notification
+      try {
+        await NotificationService.createNotification(sub.userId, {
+          type: 'subscription',
+          title: '⏰ Trial Period Expired',
+          body: 'Your 3-day free trial has ended. Subscribe now for ₹199/month to continue using the app.',
+          status: 'warning',
+          data: {
+            subscriptionId: sub._id.toString(),
+            action: 'subscribe',
+            planPrice: 199,
+          },
+          relatedEntityId: sub._id,
+          relatedEntityType: 'subscription',
+        });
+      } catch (notifErr) {
+        console.error(`[CRON] Failed to send trial expiry notification for user ${sub.userId}:`, notifErr.message);
+      }
+
+      console.log(`[CRON] Expired trial subscription for user: ${sub.userId}`);
     }
 
-    console.log(`[CRON] Total expired: ${expiredSubs.length}`);
+    console.log(`[CRON] Total trial subscriptions expired: ${expiredTrials.length}`);
 
   } catch (error) {
-    console.error('[CRON ERROR] Subscription expiry:', error.message);
+    console.error('[CRON ERROR] Trial subscription expiry:', error.message);
   }
 });
 
+/**
+ * Cron: Paid Subscription Expiry Check (every 10 minutes)
+ * - Marks expired active (paid) subscriptions as 'expired'
+ * - Updates user.isSubscribed = false
+ * - Sends renewal notification
+ */
+cron.schedule('*/10 * * * *', async () => {
+  console.log('[CRON] Running Paid Subscription Expiry Check...');
+
+  try {
+    const now = new Date();
+
+    const expiredPaid = await Subscription.find({
+      status: 'active',
+      expiryDate: { $lte: now }
+    });
+
+    if (!expiredPaid.length) {
+      console.log('[CRON] No expired paid subscriptions found');
+      return;
+    }
+
+    for (const sub of expiredPaid) {
+      sub.status = 'expired';
+      await sub.save();
+
+      await User.findByIdAndUpdate(sub.userId, {
+        isSubscribed: false
+      });
+
+      // Send renewal notification
+      try {
+        await NotificationService.createNotification(sub.userId, {
+          type: 'subscription',
+          title: '📋 Subscription Expired',
+          body: 'Your monthly subscription has expired. Renew now for ₹199/month to continue accessing all content.',
+          status: 'warning',
+          data: {
+            subscriptionId: sub._id.toString(),
+            action: 'renew',
+            planPrice: 199,
+          },
+          relatedEntityId: sub._id,
+          relatedEntityType: 'subscription',
+        });
+      } catch (notifErr) {
+        console.error(`[CRON] Failed to send paid expiry notification for user ${sub.userId}:`, notifErr.message);
+      }
+
+      console.log(`[CRON] Expired paid subscription for user: ${sub.userId}`);
+    }
+
+    console.log(`[CRON] Total paid subscriptions expired: ${expiredPaid.length}`);
+
+  } catch (error) {
+    console.error('[CRON ERROR] Paid subscription expiry:', error.message);
+  }
+});
+
+/**
+ * Cron: Trial Ending Warning Notification (every hour)
+ * - Find trial subscriptions ending within the next 24 hours
+ * - Send warning notification if not already sent
+ * - "Aapka trial kal khatam ho raha hai, subscribe karein!"
+ */
+cron.schedule('0 * * * *', async () => {
+  console.log('[CRON] Running Trial Ending Warning Check...');
+
+  try {
+    const now = new Date();
+    const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    // Find trial subscriptions expiring within next 24 hours
+    // that haven't been notified yet
+    const endingSoonTrials = await Subscription.find({
+      status: 'trial',
+      trialEndDate: { $gte: now, $lte: in24Hours },
+      trialNotificationSent: { $ne: true }
+    });
+
+    if (!endingSoonTrials.length) {
+      console.log('[CRON] No trials ending soon');
+      return;
+    }
+
+    for (const sub of endingSoonTrials) {
+      try {
+        await NotificationService.createNotification(sub.userId, {
+          type: 'subscription',
+          title: '⚠️ Trial Ending Soon!',
+          body: 'Your 3-day free trial ends today. Subscribe now for ₹199/month to keep full access to all content!',
+          status: 'warning',
+          data: {
+            subscriptionId: sub._id.toString(),
+            action: 'subscribe',
+            planPrice: 199,
+            trialEndDate: sub.trialEndDate.toISOString(),
+          },
+          relatedEntityId: sub._id,
+          relatedEntityType: 'subscription',
+        });
+
+        // Mark notification as sent so we don't send it again
+        sub.trialNotificationSent = true;
+        await sub.save();
+
+        console.log(`[CRON] Trial ending warning sent to user: ${sub.userId}`);
+      } catch (notifErr) {
+        console.error(`[CRON] Failed to send trial warning for user ${sub.userId}:`, notifErr.message);
+      }
+    }
+
+    console.log(`[CRON] Trial ending warnings sent: ${endingSoonTrials.length}`);
+
+  } catch (error) {
+    console.error('[CRON ERROR] Trial ending warning:', error.message);
+  }
+}, {
+  scheduled: true,
+  timezone: TIMEZONE
+});
 
 console.log('[CRON]  All scheduled jobs initialized');

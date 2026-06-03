@@ -1,18 +1,37 @@
-// test-razorpay.mjs — run with: node test-razorpay.mjs
-import Razorpay from 'razorpay';
+import dotenv from "dotenv";
+dotenv.config();
 
-const razorpay = new Razorpay({
-  key_id: 'rzp_test_SwLX9wqJpVXeDX',
-  key_secret: '0KygsKPPHeahvL5jQWGpS3Lf',
+const key_id = process.env.RAZORPAY_KEY_ID;
+const key_secret = process.env.RAZORPAY_KEY_SECRET;
+
+// Exact characters dekho
+console.log("Key ID length:", key_id?.length);
+console.log("Key ID chars:", JSON.stringify(key_id));
+console.log("Secret length:", key_secret?.length);
+console.log("Secret chars:", JSON.stringify(key_secret));
+
+// Clean karo
+const cleanId = key_id?.trim().replace(/['"]/g, "");
+const cleanSecret = key_secret?.trim().replace(/['"]/g, "");
+
+console.log("\nClean Key ID:", cleanId);
+console.log("Clean Secret exists:", !!cleanSecret);
+
+const auth = Buffer.from(`${cleanId}:${cleanSecret}`).toString("base64");
+
+const response = await fetch("https://api.razorpay.com/v1/orders", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Basic ${auth}`,
+  },
+  body: JSON.stringify({
+    amount: 50000,
+    currency: "INR",
+    receipt: "receipt1",
+  }),
 });
 
-try {
-  const order = await razorpay.orders.create({
-    amount: 19900,
-    currency: 'INR',
-    receipt: 'test_receipt_1',
-  });
-  console.log('✅ Success:', order);
-} catch (err) {
-  console.log('❌ Error:', JSON.stringify(err, null, 2));
-}
+console.log("\nHTTP Status:", response.status);
+const rawText = await response.text();
+console.log("Raw Response:", rawText);

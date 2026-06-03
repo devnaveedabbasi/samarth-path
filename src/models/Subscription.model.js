@@ -20,7 +20,7 @@ const subscriptionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['trial', 'active', 'expired', 'cancelled'],
+    enum: ['trial', 'pending', 'active', 'expired', 'cancelled'],
     default: 'trial'
   },
   startDate: {
@@ -35,8 +35,48 @@ const subscriptionSchema = new mongoose.Schema({
     type: String,
     enum: ['upi', 'card']
   },
+  razorpayOrderId: {
+    type: String,
+    index: true,
+    sparse: true
+  },
+  razorpayPaymentId: {
+    type: String,
+    index: true,
+    sparse: true
+  },
+  razorpaySignature: {
+    type: String
+  },
+  orderStatus: {
+    type: String,
+    enum: ['created', 'paid', 'failed'],
+    default: 'created'
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['created', 'captured', 'failed', 'refunded', 'not_applicable'],
+    default: 'not_applicable'
+  },
+  paymentAmount: {
+    type: Number
+  },
+  paymentCurrency: {
+    type: String,
+    default: 'INR'
+  },
+  paidAt: {
+    type: Date
+  },
   paymentRef: {
     type: String // Transaction ID from Razorpay
+  },
+  receipt: {
+    type: String
+  },
+  paymentNotes: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   },
   trialStartDate: {
     type: Date,
@@ -45,7 +85,19 @@ const subscriptionSchema = new mongoose.Schema({
   trialEndDate: {
     type: Date,
     default: () => new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days
-  }
+  },
+  trialNotificationSent: {
+    type: Boolean,
+    default: false
+  },
+  autoRenew: {
+    type: Boolean,
+    default: false
+  },
+  paymentHistory: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubscriptionPayment'
+  }]
 }, {
   timestamps: true
 });

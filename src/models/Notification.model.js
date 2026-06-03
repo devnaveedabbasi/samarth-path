@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['status_change', 'content_published', 'winner_announcement', 'custom'],
+    enum: ['status_change', 'content_published', 'winner_announcement', 'subscription', 'custom'],
     required: true
   },
   title: {
@@ -47,7 +47,7 @@ const notificationSchema = new mongoose.Schema({
   },
   relatedEntityType: {
     type: String,
-    enum: ['content', 'user', 'prize', 'none'],
+    enum: ['content', 'user', 'prize', 'subscription', 'none'],
     default: 'none'
   }
 }, {

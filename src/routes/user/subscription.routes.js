@@ -6,12 +6,17 @@ import { authMiddleware as authenticateToken, authorize as requireRole } from '.
 
 const router = Router();
 
-// All routes require authentication
-router.post("/razorpay-test", subscriptionController.testRazorpayOrder);
+// Razorpay webhook — NO auth required (Razorpay calls this directly)
+// Signature is verified inside the controller
+router.post('/webhook', asyncHandler(subscriptionController.razorpayWebhook));
+
+// All routes below require authentication
 router.use(authenticateToken);
 router.use(requireRole('user'));
 
 router.post('/create-order', asyncHandler(subscriptionController.createSubscriptionOrder));
 router.post('/verify-payment', asyncHandler(subscriptionController.verifyPayment));
 router.get('/status', asyncHandler(subscriptionController.getSubscriptionStatus));
+router.get('/payment-history', asyncHandler(subscriptionController.getPaymentHistory));
+
 export default router;
