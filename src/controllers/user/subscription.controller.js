@@ -54,75 +54,95 @@ const syncUserSubscriptionState = async (user, subscription) => {
 // CREATE SUBSCRIPTION ORDER
 // ==============================
 export async function createSubscriptionOrder(req, res) {
-  const userId = req.user._id;
-  const paymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
-
-  if (!paymentMethod || !['upi', 'card'].includes(paymentMethod)) {
-    throw new ApiError(400, 'Valid payment method is required (upi or card).');
-  }
-
-  const user = await User.findById(userId);
-
-  if (!user) {
-    throw new ApiError(404, 'User not found.');
-  }
-
-  // Check if user already has an active (paid) subscription that hasn't expired
-  const existingSubscription = await Subscription.findOne({
-    userId,
-    status: 'active',
-    expiryDate: { $gt: new Date() },
-  });
-
-  if (existingSubscription) {
-    throw new ApiError(
-      400,
-      'You already have an active subscription.',
-      [{
-        expiryDate: existingSubscription.expiryDate,
-        planName: existingSubscription.planName,
-      }]
-    );
-  }
-
-  const amount = PLAN_AMOUNT_IN_PAISE;
-  const currency = 'INR';
-  const receipt = `rcpt_${Date.now().toString(36)}_${userId.toString().slice(-6)}`;
-
-  const options = {
-    amount,
-    currency,
-    receipt,
-    notes: {
-      userId: userId.toString(),
-      plan: PLAN_NAME,
-      paymentMethod,
-    },
-  };
-
   try {
+    const userId = req.user._id;
+
+    const paymentMethod = String(req.body.paymentMethod || '')
+      .trim()
+      .toLowerCase();
+
+    // ✅ validate payment method
+    if (!['upi', 'card'].includes(paymentMethod)) {
+      throw new ApiError(
+        400,
+        'Valid payment method is required (upi or card).'
+      );
+    }
+
+    // ✅ find user
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new ApiError(404, 'User not found.');
+    }
+
+    // ✅ check active subscription
+    const existingSubscription = await Subscription.findOne({
+      userId,
+      status: 'active',
+      expiryDate: { $gt: new Date() },
+    });
+
+    if (existingSubscription) {
+      throw new ApiError(
+        400,
+        'You already have an active subscription.',
+        [
+          {
+            expiryDate: existingSubscription.expiryDate,
+            planName: existingSubscription.planName,
+          },
+        ]
+      );
+    }
+
+    // ✅ safety check
+    if (!PLAN_AMOUNT_IN_PAISE || PLAN_AMOUNT_IN_PAISE <= 0) {
+      throw new ApiError(500, 'Invalid plan configuration.');
+    }
+
+    const amount = PLAN_AMOUNT_IN_PAISE;
+    const currency = 'INR';
+
+    const receipt = `rcpt_${Date.now().toString(36)}_${userId
+      .toString()
+      .slice(-6)}`;
+
+    // ✅ Razorpay order payload
+    const options = {
+      amount,
+      currency,
+      receipt,
+      notes: {
+        userId: userId.toString(),
+        plan: PLAN_NAME,
+        paymentMethod,
+      },
+    };
+
     const razorpay = getRazorpayInstance();
     const order = await razorpay.orders.create(options);
 
-    // Get or create subscription record
+    // ❌ IMPORTANT FIX:
+    // Only update subscription — DO NOT create payment record here
+
     let subscription = await loadUserSubscription(userId);
 
     if (!subscription) {
-      // This shouldn't normally happen as trial is created on registration
-      // But handle it gracefully
       throw new ApiError(
         400,
         'Subscription record not found. Please contact support.'
       );
     }
 
-    // Update subscription with order info
     subscription.planName = PLAN_NAME;
     subscription.price = PLAN_PRICE;
     subscription.paymentMethod = paymentMethod;
+
     subscription.razorpayOrderId = order.id;
     subscription.orderStatus = 'created';
     subscription.paymentStatus = 'created';
+
     subscription.paymentAmount = order.amount;
     subscription.paymentCurrency = order.currency;
     subscription.receipt = order.receipt;
@@ -130,32 +150,7 @@ export async function createSubscriptionOrder(req, res) {
 
     await subscription.save();
 
-    // Save SubscriptionPayment record for this order
-    const paymentRecord = await SubscriptionPayment.findOneAndUpdate(
-      {
-        userId,
-        razorpayOrderId: order.id,
-      },
-      {
-        $setOnInsert: {
-          userId,
-          subscriptionId: subscription._id,
-          planName: PLAN_NAME,
-          amount: order.amount,
-          currency: order.currency,
-          requestedPaymentMethod: paymentMethod,
-          razorpayOrderId: order.id,
-          status: 'created',
-          gatewayStatus: 'created',
-        },
-      },
-      {
-        new: true,
-        upsert: true,
-      }
-    );
-
-    // Link user to subscription if not already linked
+    // link user
     if (String(user.subscriptionID || '') !== String(subscription._id)) {
       user.subscriptionID = subscription._id;
       await user.save();
@@ -178,20 +173,11 @@ export async function createSubscriptionOrder(req, res) {
       )
     );
   } catch (error) {
-    // If it's already an ApiError, re-throw
+    console.error('❌ RAZORPAY ORDER ERROR:', error);
+
     if (error instanceof ApiError) {
       throw error;
     }
-
-    console.error('❌ RAZORPAY ORDER ERROR:', {
-      statusCode: error?.statusCode,
-      message: error?.message,
-      description: error?.error?.description,
-      field: error?.error?.field,
-      source: error?.error?.source,
-      step: error?.error?.step,
-      reason: error?.error?.reason,
-    });
 
     throw new ApiError(
       500,

@@ -40,11 +40,12 @@ const subscriptionSchema = new mongoose.Schema({
     index: true,
     sparse: true
   },
-  razorpayPaymentId: {
-    type: String,
-    index: true,
-    sparse: true
-  },
+ 
+   razorpayPaymentId: {
+  type: String,
+  unique: true,
+  sparse: true,  // ← bas ye add karo
+},
   razorpaySignature: {
     type: String
   },
