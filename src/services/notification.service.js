@@ -130,7 +130,7 @@ export class NotificationService {
       });
 
       console.log(`[NOTIFICATION] contentType: ${contentType}, users found: ${users.length}`);
-      
+
       // Bulk DB notifications
       const notifications = users.map(user => ({
         userId: user._id,
@@ -180,7 +180,49 @@ export class NotificationService {
   }
 
   /**
-   * Send weekly winner notification
+   * Send DAILY winner notification
+   */
+  static async sendDailyWinnerNotification(winnerId, rank, score, dayNumber, month, year) {
+    try {
+      const titles = {
+        1: '🏆 You\'re Today\'s Champion!',
+        2: '🥈 Runner-up Today!',
+        3: '🥉 Third Place Today!'
+      };
+
+      const title = titles[rank] || `🎉 Congratulations! Rank #${rank} Today!`;
+      const body = `You scored ${score} points today (${dayNumber}/${month}/${year})`;
+
+      await this.createNotification(winnerId, {
+        type: 'winner_announcement',
+        title,
+        body,
+        status: 'success',
+        data: {
+          rank,
+          score,
+          dayNumber,
+          month,
+          year,
+          cycleType: 'daily'
+        }
+      });
+
+      // Send email
+      const user = await User.findById(winnerId).select('email name');
+      if (user?.email) {
+        await this.sendWinnerEmail(user.email, user.name, rank, score, 'Daily', null, null, dayNumber, month, year);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error sending daily winner notification:', error);
+      throw new ApiError(500, 'Failed to send daily winner notification', error.message);
+    }
+  }
+
+  /**
+   * Send WEEKLY winner notification
    */
   static async sendWeeklyWinnerNotification(winnerId, rank, score, weekNumber, year) {
     try {
@@ -190,7 +232,7 @@ export class NotificationService {
         3: '🥉 Third Place Winner!'
       };
 
-      const title = titles[rank] || `Congratulations! Rank #${rank}`;
+      const title = titles[rank] || `Congratulations! Rank #${rank} This Week!`;
       const body = `You scored ${score} points this week (Week ${weekNumber}, ${year})`;
 
       await this.createNotification(winnerId, {
@@ -202,32 +244,40 @@ export class NotificationService {
           rank,
           score,
           weekNumber,
-          year
+          year,
+          cycleType: 'weekly'
         }
       });
 
-      // Also send email
+      // Send email
       const user = await User.findById(winnerId).select('email name');
       if (user?.email) {
-        await this.sendWinnerEmail(user.email, user.name, rank, score, weekNumber);
+        await this.sendWinnerEmail(user.email, user.name, rank, score, 'Weekly', weekNumber, year);
       }
 
       return true;
     } catch (error) {
-      console.error('Error sending winner notification:', error);
-      throw new ApiError(500, 'Failed to send winner notification', error.message);
+      console.error('Error sending weekly winner notification:', error);
+      throw new ApiError(500, 'Failed to send weekly winner notification', error.message);
     }
   }
 
   /**
-   * Send winner announcement email
+   * Send winner announcement email (supports both daily and weekly)
    */
-  static async sendWinnerEmail(email, name, rank, score, weekNumber) {
+  static async sendWinnerEmail(email, name, rank, score, cycleType, weekNumber = null, year = null, dayNumber = null, month = null, dayYear = null) {
     const rankEmoji = rank === 1 ? '🏆' : rank === 2 ? '🥈' : '🥉';
     const rankTitle = rank === 1 ? 'CHAMPION' : rank === 2 ? 'RUNNER-UP' : 'THIRD PLACE';
     const rankColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : '#CD7F32';
 
-    const subject = `${rankEmoji} Congratulations! You're a Samarth Path Weekly Winner - Rank #${rank}`;
+    let periodText = '';
+    if (cycleType === 'Daily') {
+      periodText = `Daily Quiz Challenge (${dayNumber}/${month}/${dayYear})`;
+    } else {
+      periodText = `Weekly Quiz Challenge (Week ${weekNumber}, ${year})`;
+    }
+
+    const subject = `${rankEmoji} Congratulations! You're a Samarth Path ${cycleType} Winner - Rank #${rank}`;
 
     const html = `
       <!DOCTYPE html>
@@ -299,34 +349,30 @@ export class NotificationService {
       </head>
       <body>
         <div class="container">
-          <!-- Header -->
           <div class="header">
             <div class="logo">🎓 Samarth Path</div>
             <div class="emoji">${rankEmoji}</div>
             <h1 style="margin: 10px 0; font-size: 28px;">CONGRATULATIONS!</h1>
-            <p style="margin: 10px 0; font-size: 16px;">You're a Weekly Quiz Winner</p>
+            <p style="margin: 10px 0; font-size: 16px;">You're a ${cycleType} Quiz Winner</p>
           </div>
 
-          <!-- Rank Badge -->
           <div class="rank-badge">
             RANK #${rank} - ${rankTitle}
           </div>
 
-          <!-- Content -->
           <div class="content">
             <div class="greeting">Hello ${name},</div>
             
-            <p>🎉 Amazing news! You've secured <strong>Rank #${rank}</strong> in the Samarth Path Weekly Quiz Challenge (Week ${weekNumber})!</p>
+            <p>🎉 Amazing news! You've secured <strong>Rank #${rank}</strong> in the Samarth Path ${periodText}!</p>
 
-            <!-- Stats -->
             <div class="stats">
               <div class="stat-item">
                 <span class="stat-label">Your Score:</span>
                 <span class="stat-value">${score} Points</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">Week Number:</span>
-                <span class="stat-value">Week ${weekNumber}</span>
+                <span class="stat-label">Period:</span>
+                <span class="stat-value">${cycleType}</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">Achievement:</span>
@@ -334,17 +380,14 @@ export class NotificationService {
               </div>
             </div>
 
-            <!-- Prize Info -->
             <div class="prize-info">
               <strong>🎁 Reward Unlocked!</strong><br>
               <small>Check your account for exclusive prizes and badges</small>
             </div>
 
-            <!-- Motivational Message -->
             <div class="motivational">
-              <strong>💪 Keep it up!</strong> Challenge yourself next week to climb the leaderboard even higher. Every correct answer brings you closer to becoming the champion!
+              <strong>💪 Keep it up!</strong> Challenge yourself ${cycleType === 'Daily' ? 'tomorrow' : 'next week'} to climb the leaderboard even higher. Every correct answer brings you closer to becoming the champion!
             </div>
-
 
             <div class="divider"></div>
 
@@ -353,9 +396,8 @@ export class NotificationService {
             </p>
           </div>
 
-          <!-- Footer -->
           <div class="footer">
-            <p style="margin: 0;">📧 Samarth Path - Weekly Quiz Winners Announcement</p>
+            <p style="margin: 0;">📧 Samarth Path - ${cycleType} Quiz Winners Announcement</p>
             <p style="margin: 5px 0;">This is an automated message. Please don't reply to this email.</p>
             <p style="margin: 10px 0; color: #aaa;">© 2026 Samarth Path. All rights reserved.</p>
           </div>

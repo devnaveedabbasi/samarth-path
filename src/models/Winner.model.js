@@ -19,6 +19,8 @@ const winnerSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+    winnerDate: Date, // daily winner ke liye
+
   year: {
     type: Number,
     required: true
