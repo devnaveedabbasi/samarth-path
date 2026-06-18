@@ -41,20 +41,24 @@ export function isValidIndianPhone(phone) {
   const cleaned = normalizePhone(phone);
   return /^(?:91|0)?[6-9]\d{9}$/.test(cleaned);
 }
+
 export async function register(req, res) {
   const name = String(req.body.name || '').trim();
+  const address = String(req.body.address || '').trim();
   let phone = String(req.body.phone || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
-  if (!name || !phone || !email || !password) {
-    throw new ApiError(400, 'Name, phone, email, and password are required.');
+  if (!name || !phone || !email || !password || !address) {
+    console.log('VALIDATION FAILED:', { name, phone, email, password, address });
+    throw new ApiError(400, 'Name, phone, email, address, and password are required.');
   }
+  console.log('VALIDATION PASSED, creating user...');
   if (!isValidIndianPhone(phone)) {
     throw new ApiError(400, 'Invalid phone number format. Must be a valid Indian mobile number.');
   }
 
- 
+
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     throw new ApiError(400, 'Invalid email format.');
@@ -79,12 +83,13 @@ export async function register(req, res) {
   const otp = generateNumericOtp(6);
 
 
+  console.log('otp>>>>>>>', otp, address)
   await sendOtpSms(phone, otp);
-  
   const user = await User.create({
     name,
     phone,
     email,
+    address,
     password: hashedPassword,
     role: 'user',
     status: 'pending',
@@ -113,7 +118,7 @@ export async function register(req, res) {
   user.subscriptionID = subscription._id;
   user.isSubscribed = false;
   await user.save();
-  
+
 
   res.status(201).json(
     new ApiResponse(
@@ -464,7 +469,7 @@ export async function changePassword(req, res) {
 
 export async function updateProfile(req, res) {
   const userId = req.user._id;
-  const { name, gender, dateOfBirth } = req.body
+  const { name, gender, dateOfBirth, address } = req.body
 
   const user = await User.findById(userId);
 
@@ -476,6 +481,11 @@ export async function updateProfile(req, res) {
   if (typeof name === 'string' && name.trim() && name.trim() !== user.name) {
     user.name = String(name).trim();
     updatedFields.name = user.name;
+  }
+
+  if (typeof address === 'string' && address.trim() && address.trim() !== user.address) {
+    user.address = String(address).trim();          // ✅ user.address
+    updatedFields.address = user.address;           // ✅ 
   }
 
   if (gender) {
@@ -569,7 +579,6 @@ export async function me(req, res) {
   if (!user) {
     throw new ApiError(404, 'User not found.');
   }
-
   const subscription = user.subscriptionID;
 
   res.status(200).json(
@@ -585,6 +594,7 @@ export async function me(req, res) {
         profilePicture: user.profilePicture,
         gender: user.gender,
         dateOfBirth: user.dateOfBirth,
+        address: user.address,
         isSubscribed: user.isSubscribed,
         subscription: subscription ? {
           status: subscription.status,
@@ -596,5 +606,60 @@ export async function me(req, res) {
       },
       'User profile retrieved successfully.'
     )
+  );
+}
+
+
+export async function updateNotificationSettings(req, res) {
+  try {
+    const userId = req.user._id;
+    const { type, value } = req.body;
+
+    if (!['text', 'video', 'quiz'].includes(type)) {
+      throw new ApiError(400, 'Invalid notification type.');
+    }
+
+    if (typeof value !== 'boolean') {
+      throw new ApiError(400, 'Value must be boolean.');
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new ApiError(404, 'User not found.');
+    }
+
+    // ensure object exists
+    if (!user.notificationSettings) {
+      user.notificationSettings = {
+        text: true,
+        video: true,
+        quiz: true,
+      };
+    }
+
+    user.notificationSettings[type] = value;
+    user.markModified('notificationSettings'); // ✅ Bas yahan add karo
+    await user.save();
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        user.notificationSettings,
+        'Notification settings updated successfully.'
+      )
+    );
+
+  } catch (error) {
+    console.error('NOTIFICATION SETTINGS ERROR:', error);
+    throw new ApiError(500, error.message || 'Failed to update settings');
+  }
+}
+
+export async function getNotificationSettings(req, res) {
+  const user = await User.findById(req.user._id);
+
+  return res.status(200).json(
+    new ApiResponse(200, user.notificationSettings)
   );
 }

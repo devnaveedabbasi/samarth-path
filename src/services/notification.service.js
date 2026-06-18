@@ -14,44 +14,44 @@ export class NotificationService {
   /**
    * Create and send notification to user
    */
-static async createNotification(userId, {
-  type, title, body, status = 'info',
-  data = {}, relatedEntityId = null, relatedEntityType = 'none'
-}) {
-  try {
-    const notification = await Notification.create({
-      userId, type, title, body, status, data,
-      relatedEntityId, relatedEntityType
-    });
+  static async createNotification(userId, {
+    type, title, body, status = 'info',
+    data = {}, relatedEntityId = null, relatedEntityType = 'none'
+  }) {
+    try {
+      const notification = await Notification.create({
+        userId, type, title, body, status, data,
+        relatedEntityId, relatedEntityType
+      });
 
-    const user = await User.findById(userId).select('fcmToken email');
-    if (user?.fcmToken) {
-      try {
-        await sendNotification({
-          token: user.fcmToken,
-          title,
-          body,
-          // ✅ FCM sirf strings accept karta hai
-          data: Object.fromEntries(
-            Object.entries({ type, status, ...data }).map(([k, v]) => [k, String(v)])
-          )
-        });
-      } catch (err) {
-        if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
-          await User.findByIdAndUpdate(userId, { $unset: { fcmToken: 1 } });
-          console.log(`[FCM] Removed invalid token for user: ${userId}`);
-        } else {
-          console.error(`[FCM] Push failed for user ${userId}:`, err.message);
+      const user = await User.findById(userId).select('fcmToken email');
+      if (user?.fcmToken) {
+        try {
+          await sendNotification({
+            token: user.fcmToken,
+            title,
+            body,
+            // ✅ FCM sirf strings accept karta hai
+            data: Object.fromEntries(
+              Object.entries({ type, status, ...data }).map(([k, v]) => [k, String(v)])
+            )
+          });
+        } catch (err) {
+          if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
+            await User.findByIdAndUpdate(userId, { $unset: { fcmToken: 1 } });
+            console.log(`[FCM] Removed invalid token for user: ${userId}`);
+          } else {
+            console.error(`[FCM] Push failed for user ${userId}:`, err.message);
+          }
         }
       }
-    }
 
-    return notification;
-  } catch (error) {
-    console.error('Error creating notification:', error);
-    throw new ApiError(500, 'Failed to create notification', error.message);
+      return notification;
+    } catch (error) {
+      console.error('Error creating notification:', error);
+      throw new ApiError(500, 'Failed to create notification', error.message);
+    }
   }
-}
   /**
    * Send admin status change notification
    * suspend => warning, blocked => error, active => success
@@ -83,93 +83,101 @@ static async createNotification(userId, {
    * Send content published notification to all users
    */
   static async sendContentPublishedNotification(contentData, adminId) {
-  try {
-    const contentType = contentData.contentType;
-    const contentTitle =
-      contentData.textContent?.title ||
-      contentData.quizContent?.title ||
-      contentData.videoContent?.title ||
-      'New Content';
+    try {
+      const contentType = contentData.contentType;
+      const contentTitle =
+        contentData.textContent?.title ||
+        contentData.quizContent?.title ||
+        contentData.videoContent?.title ||
+        'New Content';
 
-    const unlocksAt = contentData.unlocksAt; // "08:00", "14:00", "19:00"
+      const unlocksAt = contentData.unlocksAt; // "08:00", "14:00", "19:00"
 
-    // Check if unlock time has already arrived or is in the future
-const now = moment().tz(TIMEZONE);    const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
-const unlockMoment = moment.tz(
-  `${moment().format('YYYY-MM-DD')} ${unlocksAt}`,
-  `YYYY-MM-DD HH:mm`,
-  TIMEZONE
-);
-    const isAlreadyUnlocked = now.isSameOrAfter(unlockMoment);
+      // Check if unlock time has already arrived or is in the future
+      const now = moment().tz(TIMEZONE); const [unlockHour, unlockMin] = unlocksAt.split(':').map(Number);
+      const unlockMoment = moment.tz(
+        `${moment().format('YYYY-MM-DD')} ${unlocksAt}`,
+        `YYYY-MM-DD HH:mm`,
+        TIMEZONE
+      );
+      const isAlreadyUnlocked = now.isSameOrAfter(unlockMoment);
 
-    // Content type readable naam
-    const typeLabel = {
-      text: 'Post',
-      quiz: 'Quiz',
-      video: 'Video'
-    }[contentType] || 'Content';
+      // Content type readable naam
+      const typeLabel = {
+        text: 'Post',
+        quiz: 'Quiz',
+        video: 'Video'
+      }[contentType] || 'Content';
 
-    const title = isAlreadyUnlocked
-      ? `🔓 ${typeLabel} Now Available!`
-      : `📅 New ${typeLabel} Scheduled!`;
+      const title = isAlreadyUnlocked
+        ? `🔓 ${typeLabel} Now Available!`
+        : `📅 New ${typeLabel} Scheduled!`;
 
-    const body = isAlreadyUnlocked
-      ? `"${contentTitle}" is now available — watch it now!`
-      : `"${contentTitle}" will be published today at ${unlocksAt} PKT.`;
+      const body = isAlreadyUnlocked
+        ? `"${contentTitle}" is now available — watch it now!`
+        : `"${contentTitle}" will be published today at ${unlocksAt} PKT.`;
 
-    // Get all approved users
-    const users = await User.find({
-      status: 'approved',
-      isDeleted: { $ne: true }
-    }).select('_id fcmToken').lean();
+      // Get all approved users
+      const users = await User.find({
+        status: 'approved',
+        isDeleted: { $ne: true },
+        [`notificationSettings.${contentType}`]: true
+      }).select('_id fcmToken notificationSettings').lean();
 
-    // Bulk DB notifications
-    const notifications = users.map(user => ({
-      userId: user._id,
-      type: 'content_published',
-      title,
-      body,
-      status: 'info',
-      data: {
-        contentType,
-        contentId: contentData._id.toString(),
-        unlocksAt,
-        isAlreadyUnlocked
-      },
-      relatedEntityId: contentData._id,
-      relatedEntityType: 'content'
-    }));
+      // Har user ka setting print karo
+      users.forEach(u => {
+        console.log(`User: ${u._id}, ${contentType}: ${u.notificationSettings?.[contentType]}`);
+      });
 
-    await Notification.insertMany(notifications);
+      console.log(`[NOTIFICATION] contentType: ${contentType}, users found: ${users.length}`);
+      
+      // Bulk DB notifications
+      const notifications = users.map(user => ({
+        userId: user._id,
+        type: 'content_published',
+        title,
+        body,
+        status: 'info',
+        data: {
+          contentType,
+          contentId: contentData._id.toString(),
+          unlocksAt,
+          isAlreadyUnlocked
+        },
+        relatedEntityId: contentData._id,
+        relatedEntityType: 'content'
+      }));
 
-    // Send FCM push to users who have FCM tokens
-    const fcmTokens = users.map(u => u.fcmToken).filter(Boolean);
-    for (const token of fcmTokens) {
-      try {
-        await sendNotification({
-          token,
-          title,
-          body,
-          data: {
-            type: 'content_published',
-            contentType,
-            contentId: contentData._id.toString(),
-            unlocksAt,
-            isAlreadyUnlocked: String(isAlreadyUnlocked)
-          }
-        });
-      } catch (err) {
-        console.error(`[FCM] Token failed: ${token}`, err.message);
+      await Notification.insertMany(notifications);
+
+      // Send FCM push to users who have FCM tokens
+      const fcmTokens = users.map(u => u.fcmToken).filter(Boolean);
+      for (const token of fcmTokens) {
+        try {
+          await sendNotification({
+            token,
+            title,
+            body,
+            data: {
+              type: 'content_published',
+              contentType,
+              contentId: contentData._id.toString(),
+              unlocksAt,
+              isAlreadyUnlocked: String(isAlreadyUnlocked)
+            }
+          });
+        } catch (err) {
+          console.error(`[FCM] Token failed: ${token}`, err.message);
+        }
       }
-    }
 
-    console.log(`[NOTIFICATION] "${title}" sent to ${users.length} users`);
-    return notifications.length;
-  } catch (error) {
-    console.error('Error sending content published notification:', error);
-    throw new ApiError(500, 'Failed to send notifications', error.message);
+      console.log(`[NOTIFICATION] "${title}" sent to ${users.length} users`);
+      return notifications.length;
+    } catch (error) {
+      console.error('Error sending content published notification:', error);
+      throw new ApiError(500, 'Failed to send notifications', error.message);
+    }
   }
-}
 
   /**
    * Send weekly winner notification
@@ -218,7 +226,7 @@ const unlockMoment = moment.tz(
     const rankEmoji = rank === 1 ? '🏆' : rank === 2 ? '🥈' : '🥉';
     const rankTitle = rank === 1 ? 'CHAMPION' : rank === 2 ? 'RUNNER-UP' : 'THIRD PLACE';
     const rankColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : '#CD7F32';
-    
+
     const subject = `${rankEmoji} Congratulations! You're a Samarth Path Weekly Winner - Rank #${rank}`;
 
     const html = `

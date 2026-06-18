@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, unique: true, sparse: true },
   phone: { type: String, required: true, unique: true, length: 15 },
   password: { type: String, select: false },
+  address: { type: String, required: false },
   role: {
     type: String,
     enum: ['user', 'admin'],
@@ -16,16 +17,17 @@ const userSchema = new mongoose.Schema({
     enum: ["pending", "approved", "blocked", "suspended"],
     default: "pending"
   },
+
   gender: { type: String, enum: ['male', 'female', 'other'] },
-  dateOfBirth: { type: Date ,default: null},
-  profilePicture: { type: String ,default: null},
+  dateOfBirth: { type: Date, default: null },
+  profilePicture: { type: String, default: null },
   isEmailVerified: { type: Boolean, default: false },
   isPhoneVerified: { type: Boolean, default: false },
   phoneOTP: { type: String },
   otpExpiry: { type: Date },
   otpAttempts: { type: Number, default: 0 },
 
-  resetOTP: String,         
+  resetOTP: String,
   resetOtpExpiry: Date,
   resetOtpAttempts: { type: Number, default: 0 },
   resetPasswordVerified: { type: Boolean, default: false },
@@ -42,9 +44,11 @@ const userSchema = new mongoose.Schema({
 
   // Subscription reference
   isSubscribed: { type: Boolean, default: false },
-  subscriptionID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Subscription'
+  subscriptionID: { type: mongoose.Schema.Types.ObjectId, ref: 'Subscription' },
+  notificationSettings: {
+    text: { type: Boolean, default: true },
+    video: { type: Boolean, default: true },
+    quiz: { type: Boolean, default: true }
   },
 
 }, {
