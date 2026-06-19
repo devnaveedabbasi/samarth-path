@@ -113,3 +113,12 @@ export async function adminLogin(req, res) {
     )
   );
 }
+
+export async function adminLogout(req, res) {
+  const userId = req.user._id;
+  await User.findByIdAndUpdate(userId, { token: null });
+
+  res.status(200).json(
+    new ApiResponse(200, {}, 'Logged out successfully.')
+  );
+} 
