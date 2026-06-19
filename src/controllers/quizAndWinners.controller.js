@@ -291,18 +291,545 @@ export async function getWeeklyScore(req, res) {
 
 
 export async function getWinners(req, res) {
-  const now = new Date();
-  const { days } = req.query;
+  try {
+    const now = new Date();
+    const { days, daily, weekly, lastWeek } = req.query;
+console.log('Query params:', { days, daily, weekly, lastWeek });
+    // ── DAILY: Current day attempters + ONE winner ──
+    if (daily === 'true') {
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
 
-  // ── ?days=10 → sirf last10Days ──
-  if (days === '10') {
-    const last10DaysDate = new Date(now);
-    last10DaysDate.setDate(last10DaysDate.getDate() - 10);
+      // Get all attempters for today with sorting
+      const dailyAttempters = await QuizAttempt.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: startOfDay,
+              $lt: endOfDay
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$userId',
+            totalQuestions: { $sum: 1 },
+            correctAnswers: {
+              $sum: { $cond: ['$isCorrect', 1, 0] }
+            },
+            totalTime: { $sum: '$timeTakenSeconds' },
+            firstAttemptAt: { $min: '$createdAt' }
+          }
+        },
+        {
+          $match: {
+            correctAnswers: { $gt: 0 }
+          }
+        },
+        {
+          $addFields: {
+            accuracy: {
+              $multiply: [
+                { $divide: ['$correctAnswers', '$totalQuestions'] },
+                100
+              ]
+            }
+          }
+        },
+        {
+          $sort: {
+            correctAnswers: -1,
+            accuracy: -1,
+            totalTime: 1,
+            firstAttemptAt: 1
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+        {
+          $project: {
+            userId: '$_id',
+            userName: '$user.name',
+            email: '$user.email',
+            profilePicture: '$user.profilePicture',
+            stats: {
+              totalQuestions: 1,
+              correctAnswers: 1,
+              accuracy: 1,
+              totalTime: 1,
+              firstAttemptAt: 1
+            },
+            _id: 0
+          }
+        }
+      ]);
 
-    const last10DaysAttempts = await QuizAttempt.aggregate([
+      // Format with rank
+      const formattedAttempters = dailyAttempters.map((item, index) => ({
+        rank: index + 1,
+        ...item
+      }));
+
+      // ✅ Get ONLY ONE daily winner (admin selected)
+      const dailyWinner = await Winner.findOne({
+        cycleType: 'daily',
+        winnerDate: {
+          $gte: startOfDay,
+          $lt: endOfDay
+        }
+      }).populate('userId', 'name email profilePicture');
+
+      let winner = null;
+      if (dailyWinner) {
+        // Find winner stats from attempters
+        const winnerStats = dailyAttempters.find(
+          (item) => item.userId.toString() === dailyWinner.userId._id.toString()
+        );
+
+        winner = {
+          userId: dailyWinner.userId._id,
+          name: dailyWinner.userId.name,
+          email: dailyWinner.userId.email,
+          profilePicture: dailyWinner.userId.profilePicture || null,
+          stats: winnerStats?.stats || {
+            totalQuestions: 0,
+            correctAnswers: dailyWinner.score || 0,
+            accuracy: 0,
+            totalTime: 0,
+            firstAttemptAt: dailyWinner.winnerDate
+          },
+          selectedAt: dailyWinner.winnerDate,
+          rank: dailyWinner.rank || 1
+        };
+      }
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            daily: {
+              date: now.toISOString().split('T')[0],
+              totalParticipants: formattedAttempters.length,
+              winner: winner, // ✅ Only ONE winner (or null)
+              allParticipants: formattedAttempters
+            }
+          },
+          'Daily attempters and winner retrieved successfully.'
+        )
+      );
+    }
+
+    // ── WEEKLY: Current week attempters + ONE winner ──
+    if (weekly === 'true') {
+      const startOfWeek = new Date(now);
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      startOfWeek.setDate(diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      // Get all attempters for current week with sorting
+      const weeklyAttempters = await QuizAttempt.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: startOfWeek,
+              $lte: endOfWeek
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$userId',
+            totalQuestions: { $sum: 1 },
+            correctAnswers: {
+              $sum: { $cond: ['$isCorrect', 1, 0] }
+            },
+            totalTime: { $sum: '$timeTakenSeconds' },
+            firstAttemptAt: { $min: '$createdAt' }
+          }
+        },
+        {
+          $match: {
+            correctAnswers: { $gt: 0 }
+          }
+        },
+        {
+          $addFields: {
+            accuracy: {
+              $multiply: [
+                { $divide: ['$correctAnswers', '$totalQuestions'] },
+                100
+              ]
+            }
+          }
+        },
+        {
+          $sort: {
+            correctAnswers: -1,
+            accuracy: -1,
+            totalTime: 1,
+            firstAttemptAt: 1
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+        {
+          $project: {
+            userId: '$_id',
+            userName: '$user.name',
+            email: '$user.email',
+            profilePicture: '$user.profilePicture',
+            stats: {
+              totalQuestions: 1,
+              correctAnswers: 1,
+              accuracy: 1,
+              totalTime: 1,
+              firstAttemptAt: 1
+            },
+            _id: 0
+          }
+        }
+      ]);
+
+      // Format with rank
+      const formattedAttempters = weeklyAttempters.map((item, index) => ({
+        rank: index + 1,
+        ...item
+      }));
+
+      // Get week number
+      const getWeekNumber = (date) => {
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+        const week1 = new Date(d.getFullYear(), 0, 4);
+        return 1 + Math.round(((d - week1) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+      };
+
+      const weekNumber = getWeekNumber(now);
+
+      // ✅ Get ONLY ONE weekly winner (admin selected)
+      const weeklyWinner = await Winner.findOne({
+        cycleType: 'weekly',
+        weekNumber: weekNumber,
+        year: now.getFullYear()
+      }).populate('userId', 'name email profilePicture');
+
+      let winner = null;
+      if (weeklyWinner) {
+        // Find winner stats from attempters
+        const winnerStats = weeklyAttempters.find(
+          (item) => item.userId.toString() === weeklyWinner.userId._id.toString()
+        );
+
+        winner = {
+          userId: weeklyWinner.userId._id,
+          name: weeklyWinner.userId.name,
+          email: weeklyWinner.userId.email,
+          profilePicture: weeklyWinner.userId.profilePicture || null,
+          stats: winnerStats?.stats || {
+            totalQuestions: 0,
+            correctAnswers: weeklyWinner.score || 0,
+            accuracy: 0,
+            totalTime: 0,
+            firstAttemptAt: weeklyWinner.winnerDate
+          },
+          selectedAt: weeklyWinner.winnerDate,
+          rank: weeklyWinner.rank || 1
+        };
+      }
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            weekly: {
+              week: {
+                start: startOfWeek,
+                end: endOfWeek,
+                weekNumber: weekNumber,
+                year: now.getFullYear()
+              },
+              isLive: true,
+              note: 'Updates as users attempt quizzes. Final winner announced on Monday.',
+              totalParticipants: formattedAttempters.length,
+              winner: winner, // ✅ Only ONE winner (or null)
+              allParticipants: formattedAttempters
+            }
+          },
+          'Weekly attempters and winner retrieved successfully.'
+        )
+      );
+    }
+
+    // ── LAST WEEK: All attempters + ONLY ONE winner ──
+    if (lastWeek === 'true') {
+      const currentDay = now.getDay();
+      
+      // Calculate previous week's Monday and Sunday
+      let prevWeekStart, prevWeekEnd;
+      
+      if (currentDay === 1) {
+        prevWeekStart = new Date(now);
+        prevWeekStart.setDate(now.getDate() - 7);
+        prevWeekStart.setHours(0, 0, 0, 0);
+        
+        prevWeekEnd = new Date(now);
+        prevWeekEnd.setDate(now.getDate() - 1);
+        prevWeekEnd.setHours(23, 59, 59, 999);
+      } else {
+        prevWeekStart = new Date(now);
+        prevWeekStart.setDate(now.getDate() - currentDay - 6);
+        prevWeekStart.setHours(0, 0, 0, 0);
+        
+        prevWeekEnd = new Date(now);
+        prevWeekEnd.setDate(now.getDate() - currentDay);
+        prevWeekEnd.setHours(23, 59, 59, 999);
+      }
+
+      // Get all attempters for last week with sorting
+      const lastWeekAttempters = await QuizAttempt.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: prevWeekStart,
+              $lte: prevWeekEnd
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$userId',
+            totalQuestions: { $sum: 1 },
+            correctAnswers: {
+              $sum: { $cond: ['$isCorrect', 1, 0] }
+            },
+            totalTime: { $sum: '$timeTakenSeconds' },
+            firstAttemptAt: { $min: '$createdAt' }
+          }
+        },
+        {
+          $match: {
+            correctAnswers: { $gt: 0 }
+          }
+        },
+        {
+          $addFields: {
+            accuracy: {
+              $multiply: [
+                { $divide: ['$correctAnswers', '$totalQuestions'] },
+                100
+              ]
+            }
+          }
+        },
+        {
+          $sort: {
+            correctAnswers: -1,
+            accuracy: -1,
+            totalTime: 1,
+            firstAttemptAt: 1
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+        {
+          $project: {
+            userId: '$_id',
+            userName: '$user.name',
+            email: '$user.email',
+            profilePicture: '$user.profilePicture',
+            stats: {
+              totalQuestions: 1,
+              correctAnswers: 1,
+              accuracy: 1,
+              totalTime: 1,
+              firstAttemptAt: 1
+            },
+            _id: 0
+          }
+        }
+      ]);
+
+      // Format with rank
+      const formattedAttempters = lastWeekAttempters.map((item, index) => ({
+        rank: index + 1,
+        ...item
+      }));
+
+      // Get week number
+      const getWeekNumber = (date) => {
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+        const week1 = new Date(d.getFullYear(), 0, 4);
+        return 1 + Math.round(((d - week1) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+      };
+
+      // ✅ Get ONLY ONE weekly winner from last week
+      const lastWeekWinner = await Winner.findOne({
+        cycleType: 'weekly',
+        winnerDate: {
+          $gte: prevWeekStart,
+          $lte: prevWeekEnd
+        }
+      }).populate('userId', 'name email profilePicture');
+
+      let winner = null;
+      if (lastWeekWinner) {
+        // Find winner stats from attempters
+        const winnerStats = lastWeekAttempters.find(
+          (item) => item.userId.toString() === lastWeekWinner.userId._id.toString()
+        );
+
+        winner = {
+          userId: lastWeekWinner.userId._id,
+          name: lastWeekWinner.userId.name,
+          email: lastWeekWinner.userId.email,
+          profilePicture: lastWeekWinner.userId.profilePicture || null,
+          stats: winnerStats?.stats || {
+            totalQuestions: 0,
+            correctAnswers: lastWeekWinner.score || 0,
+            accuracy: 0,
+            totalTime: 0,
+            firstAttemptAt: lastWeekWinner.winnerDate
+          },
+          selectedAt: lastWeekWinner.winnerDate,
+          rank: lastWeekWinner.rank || 1
+        };
+      }
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            lastWeek: {
+              week: {
+                start: prevWeekStart,
+                end: prevWeekEnd,
+                weekNumber: getWeekNumber(prevWeekStart),
+                year: prevWeekStart.getFullYear()
+              },
+              totalParticipants: formattedAttempters.length,
+              winner: winner, // ✅ Only ONE winner (or null)
+              allParticipants: formattedAttempters
+            }
+          },
+          'Last week attempters and winner retrieved successfully.'
+        )
+      );
+    }
+
+    // ── ?days=10 → Last 10 days top performers ──
+    if (days === '10') {
+      const last10DaysDate = new Date(now);
+      last10DaysDate.setDate(last10DaysDate.getDate() - 10);
+
+      const last10DaysAttempts = await QuizAttempt.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: last10DaysDate, $lte: now },
+            isCorrect: true
+          }
+        },
+        {
+          $group: {
+            _id: '$userId',
+            correctAnswers: { $sum: 1 },
+            totalTime: { $sum: '$timeTakenSeconds' },
+            firstAttemptAt: { $min: '$createdAt' }
+          }
+        },
+        {
+          $sort: {
+            correctAnswers: -1,
+            totalTime: 1,
+            firstAttemptAt: 1
+          }
+        },
+        { $limit: 10 },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+        {
+          $project: {
+            userId: '$_id',
+            userName: '$user.name',
+            email: '$user.email',
+            profilePicture: '$user.profilePicture',
+            correctAnswers: 1,
+            totalTime: 1,
+            firstAttemptAt: 1,
+            _id: 0
+          }
+        }
+      ]);
+
+      const last10DaysUsers = last10DaysAttempts.map((user, index) => ({
+        rank: index + 1,
+        ...user
+      }));
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            last10Days: {
+              period: {
+                start: last10DaysDate,
+                end: now
+              },
+              totalParticipants: last10DaysUsers.length,
+              allParticipants: last10DaysUsers
+            }
+          },
+          'Last 10 days top performers retrieved successfully.'
+        )
+      );
+    }
+
+    // ── Default: Current week leaderboard (fallback) ──
+    const currentWeek = getWeekInfo(now);
+
+    const currentWeekAttempts = await QuizAttempt.aggregate([
       {
         $match: {
-          createdAt: { $gte: last10DaysDate, $lte: now },
+          weekNumber: currentWeek.weekNumber,
+          year: currentWeek.year,
           isCorrect: true
         }
       },
@@ -314,7 +841,6 @@ export async function getWinners(req, res) {
         }
       },
       { $sort: { score: -1, firstAttemptTime: 1 } },
-      { $limit: 10 },
       { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
       { $unwind: '$user' },
       {
@@ -329,82 +855,44 @@ export async function getWinners(req, res) {
       }
     ]);
 
-    const last10DaysUsers = last10DaysAttempts.map((user, index) => ({
+    const currentWeekAllUsers = currentWeekAttempts.map((user, index) => ({
+      rank: index + 1,
       ...user,
-      rank: index + 1
+      isTopThree: index < 3
     }));
 
     return res.status(200).json(
       new ApiResponse(
         200,
         {
-          last10Days: {
-            totalParticipants: last10DaysUsers.length,
-            allParticipants: last10DaysUsers
+          currentWeek: {
+            week: currentWeek.weekNumber,
+            year: currentWeek.year,
+            isLive: true,
+            note: 'Updates as users attempt quizzes. Final winner announced on Monday.',
+            totalParticipants: currentWeekAllUsers.length,
+            top3: currentWeekAllUsers.slice(0, 3),
+            allParticipants: currentWeekAllUsers
           }
         },
-        'Last 10 days winners retrieved successfully.'
+        'Weekly leaderboard retrieved successfully.'
+      )
+    );
+
+  } catch (error) {
+    console.error('Error in getWinners:', error);
+    return res.status(500).json(
+      new ApiResponse(
+        500,
+        null,
+        'Internal server error'
       )
     );
   }
-
-  // ── Default: sirf current week ──
-  const currentWeek = getWeekInfo(now);
-
-  const currentWeekAttempts = await QuizAttempt.aggregate([
-    {
-      $match: {
-        weekNumber: currentWeek.weekNumber,
-        year: currentWeek.year,
-        isCorrect: true
-      }
-    },
-    {
-      $group: {
-        _id: '$userId',
-        score: { $sum: 1 },
-        firstAttemptTime: { $min: '$createdAt' }
-      }
-    },
-    { $sort: { score: -1, firstAttemptTime: 1 } },
-    { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
-    { $unwind: '$user' },
-    {
-      $project: {
-        userId: '$_id',
-        userName: '$user.name',
-        profilePicture: '$user.profilePicture',
-        score: 1,
-        firstAttemptTime: 1,
-        _id: 0
-      }
-    }
-  ]);
-
-  const currentWeekAllUsers = currentWeekAttempts.map((user, index) => ({
-    ...user,
-    rank: index + 1,
-    isTopThree: index < 3
-  }));
-
-  return res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        currentWeek: {
-          week: currentWeek.weekNumber,
-          year: currentWeek.year,
-          isLive: true,
-          note: 'Updates as users attempt quizzes. Final winners announced Sunday.',
-          totalParticipants: currentWeekAllUsers.length,
-          top3: currentWeekAllUsers.slice(0, 3),
-          allParticipants: currentWeekAllUsers
-        }
-      },
-      'Weekly winners retrieved successfully.'
-    )
-  );
 }
+
+
+
 
 
 // export async function getWinners(req, res) {

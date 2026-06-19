@@ -158,134 +158,134 @@ export class WinnerService {
   }
 
   // ─── Announce Weekly Winners (Cron) ─────────────────────────
-  static async announceWeeklyWinners() {
-    try {
-      console.log('[WINNER] Starting Weekly Winner Announcement...');
+//   static async announceWeeklyWinners() {
+//     try {
+//       console.log('[WINNER] Starting Weekly Winner Announcement...');
 
-      const now = new Date();
-      const lastWeekDate = new Date(now);
-      lastWeekDate.setDate(lastWeekDate.getDate() - 1); // Saturday
-      const lastWeek = this.getWeekInfo(lastWeekDate);
-      const winners = await this.getWeeklyWinners(lastWeek.weekNumber, lastWeek.year, 3);
+//       const now = new Date();
+//       const lastWeekDate = new Date(now);
+//       lastWeekDate.setDate(lastWeekDate.getDate() - 1); // Saturday
+//       const lastWeek = this.getWeekInfo(lastWeekDate);
+//       const winners = await this.getWeeklyWinners(lastWeek.weekNumber, lastWeek.year, 3);
 
-      if (!winners.length) {
-        console.log(`[WINNER] No winners for week ${lastWeek.weekNumber}`);
-        return { success: true, message: 'No winners found', count: 0 };
-      }
+//       if (!winners.length) {
+//         console.log(`[WINNER] No winners for week ${lastWeek.weekNumber}`);
+//         return { success: true, message: 'No winners found', count: 0 };
+//       }
 
-      // 1. DB mein save karo
-      const winnerRecords = [];
-      for (const winner of winners) {
-        const exists = await Winner.findOne({
-          userId: winner.userId,
-          weekNumber: lastWeek.weekNumber,
-          year: lastWeek.year,
-          cycleType: 'weekly'
-        });
-        if (!exists) {
-          winnerRecords.push({
-            userId: winner.userId,
-            rank: winner.rank,
-            score: winner.score,
-            weekNumber: lastWeek.weekNumber,
-            year: lastWeek.year,
-            cycleType: 'weekly'
-          });
-        }
-      }
+//       // 1. DB mein save karo
+//       const winnerRecords = [];
+//       for (const winner of winners) {
+//         const exists = await Winner.findOne({
+//           userId: winner.userId,
+//           weekNumber: lastWeek.weekNumber,
+//           year: lastWeek.year,
+//           cycleType: 'weekly'
+//         });
+//         if (!exists) {
+//           winnerRecords.push({
+//             userId: winner.userId,
+//             rank: winner.rank,
+//             score: winner.score,
+//             weekNumber: lastWeek.weekNumber,
+//             year: lastWeek.year,
+//             cycleType: 'weekly'
+//           });
+//         }
+//       }
 
-      if (winnerRecords.length > 0) {
-        await Winner.insertMany(winnerRecords);
-        console.log(`[WINNER] ${winnerRecords.length} winners saved to DB`);
-      }
+//       if (winnerRecords.length > 0) {
+//         await Winner.insertMany(winnerRecords);
+//         console.log(`[WINNER] ${winnerRecords.length} winners saved to DB`);
+//       }
 
-      // 2. Saare users ko announcement notification
-      const rank1Winner = winners.find(w => w.rank === 1);
+//       // 2. Saare users ko announcement notification
+//       const rank1Winner = winners.find(w => w.rank === 1);
 
-      const allUsers = await User.find({
-        isDeleted: { $ne: true },
-        status: 'approved'
-      }).select('_id fcmToken').lean();
+//       const allUsers = await User.find({
+//         isDeleted: { $ne: true },
+//         status: 'approved'
+//       }).select('_id fcmToken').lean();
 
-      const announcementTitle = '🏆 Weekly Winners Announced!';
-      const announcementBody = rank1Winner
-        ? `${rank1Winner.userName} achieved Rank 1 in Week ${lastWeek.weekNumber} with ${rank1Winner.score} correct answers!`
-        : `Week ${lastWeek.weekNumber} winners have been announced! Check the app for details.`;
+//       const announcementTitle = '🏆 Weekly Winners Announced!';
+//       const announcementBody = rank1Winner
+//         ? `${rank1Winner.userName} achieved Rank 1 in Week ${lastWeek.weekNumber} with ${rank1Winner.score} correct answers!`
+//         : `Week ${lastWeek.weekNumber} winners have been announced! Check the app for details.`;
 
-      // Bulk DB notifications
-      const bulkNotifications = allUsers.map(user => ({
-        userId: user._id,
-        type: 'winner_announcement',
-        title: announcementTitle,
-        body: announcementBody,
-        status: 'info',
-        data: {
-          weekNumber: lastWeek.weekNumber,
-          year: lastWeek.year,
-          rank1Name: rank1Winner?.userName || null
-        },
-        relatedEntityType: 'none'
-      }));
+//       // Bulk DB notifications
+//       const bulkNotifications = allUsers.map(user => ({
+//         userId: user._id,
+//         type: 'winner_announcement',
+//         title: announcementTitle,
+//         body: announcementBody,
+//         status: 'info',
+//         data: {
+//           weekNumber: lastWeek.weekNumber,
+//           year: lastWeek.year,
+//           rank1Name: rank1Winner?.userName || null
+//         },
+//         relatedEntityType: 'none'
+//       }));
 
-      await Notification.insertMany(bulkNotifications);
-      console.log(`[WINNER] DB notifications created for ${allUsers.length} users`);
+//       await Notification.insertMany(bulkNotifications);
+//       console.log(`[WINNER] DB notifications created for ${allUsers.length} users`);
 
-      // FCM push notifications
-const fcmTokens = allUsers.map(u => u.fcmToken).filter(Boolean);
-for (const user of allUsers) {
-  if (!user.fcmToken) continue;
-  try {
-    await sendNotification({
-      token: user.fcmToken,
-      title: announcementTitle,
-      body: announcementBody,
-      data: Object.fromEntries(
-        Object.entries({ type: 'winner_announcement' }).map(([k, v]) => [k, String(v)])
-      )
-    });
-  } catch (err) {
-    if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
-      await User.findByIdAndUpdate(user._id, { $unset: { fcmToken: 1 } });
-      console.log(`[FCM] Removed invalid token for user: ${user._id}`);
-    } else {
-      console.error(`[FCM] Failed for token ${user.fcmToken}:`, err.message);
-    }
-  }
-}
+//       // FCM push notifications
+// const fcmTokens = allUsers.map(u => u.fcmToken).filter(Boolean);
+// for (const user of allUsers) {
+//   if (!user.fcmToken) continue;
+//   try {
+//     await sendNotification({
+//       token: user.fcmToken,
+//       title: announcementTitle,
+//       body: announcementBody,
+//       data: Object.fromEntries(
+//         Object.entries({ type: 'winner_announcement' }).map(([k, v]) => [k, String(v)])
+//       )
+//     });
+//   } catch (err) {
+//     if (err.errorInfo?.code === 'messaging/registration-token-not-registered') {
+//       await User.findByIdAndUpdate(user._id, { $unset: { fcmToken: 1 } });
+//       console.log(`[FCM] Removed invalid token for user: ${user._id}`);
+//     } else {
+//       console.error(`[FCM] Failed for token ${user.fcmToken}:`, err.message);
+//     }
+//   }
+// }
 
-console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
+// console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
 
-      console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
+//       console.log(`[WINNER] Push sent to ${fcmTokens.length} devices`);
 
-      // 3. Top 3 ko personal notification + email
-      for (const winner of winners) {
-        try {
-          await NotificationService.sendWeeklyWinnerNotification(
-            winner.userId,
-            winner.rank,
-            winner.score,
-            lastWeek.weekNumber,
-            lastWeek.year
-          );
-          console.log(`[WINNER]  Rank ${winner.rank} notified: ${winner.userName}`);
-        } catch (error) {
-          console.error(`[WINNER]  Failed rank ${winner.rank} (${winner.userId}):`, error.message);
-        }
-      }
+//       // 3. Top 3 ko personal notification + email
+//       for (const winner of winners) {
+//         try {
+//           await NotificationService.sendWeeklyWinnerNotification(
+//             winner.userId,
+//             winner.rank,
+//             winner.score,
+//             lastWeek.weekNumber,
+//             lastWeek.year
+//           );
+//           console.log(`[WINNER]  Rank ${winner.rank} notified: ${winner.userName}`);
+//         } catch (error) {
+//           console.error(`[WINNER]  Failed rank ${winner.rank} (${winner.userId}):`, error.message);
+//         }
+//       }
 
-      console.log(`[WINNER]  Done. ${winners.length} winners announced for week ${lastWeek.weekNumber}`);
-      return {
-        success: true,
-        message: 'Winners announced successfully',
-        count: winners.length,
-        week: lastWeek.weekNumber,
-        year: lastWeek.year
-      };
-    } catch (error) {
-      console.error('[WINNER] announceWeeklyWinners error:', error);
-      throw new ApiError(500, 'Failed to announce weekly winners', error.message);
-    }
-  }
+//       console.log(`[WINNER]  Done. ${winners.length} winners announced for week ${lastWeek.weekNumber}`);
+//       return {
+//         success: true,
+//         message: 'Winners announced successfully',
+//         count: winners.length,
+//         week: lastWeek.weekNumber,
+//         year: lastWeek.year
+//       };
+//     } catch (error) {
+//       console.error('[WINNER] announceWeeklyWinners error:', error);
+//       throw new ApiError(500, 'Failed to announce weekly winners', error.message);
+//     }
+//   }
 
 
 }

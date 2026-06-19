@@ -5,10 +5,6 @@ import mongoose from 'mongoose';
 import NotificationService from '../../services/notification.service.js';
 
 
-// ==========================================
-// GET TODAY LEADERBOARD + ALL CORRECT ATTEMPTS
-// ==========================================
-
 export const getQuizAttempters = async (req, res) => {
     try {
         const today = new Date();
@@ -377,16 +373,6 @@ export const getDailyWinners = async (req, res) => {
 };
 
 
-
-
-// ==========================================
-// GET WEEKLY LEADERBOARD + ALL CORRECT ATTEMPTS
-// ==========================================
-
-// ==========================================
-// GET WEEKLY LEADERBOARD + ALL CORRECT ATTEMPTS
-// ==========================================
-
 export const getWeeklyQuizAttempters = async (req, res) => {
     try {
         const today = new Date();
@@ -566,9 +552,6 @@ export const getWeeklyQuizAttempters = async (req, res) => {
     }
 };
 
-// ==========================================
-// SELECT WEEKLY WINNER MANUALLY
-// ==========================================
 
 export const selectWeeklyWinner = async (req, res) => {
     try {
@@ -752,13 +735,7 @@ export const selectWeeklyWinner = async (req, res) => {
         });
     }
 };
-// ==========================================
-// GET CURRENT WEEK WINNER
-// ==========================================
 
-// ==========================================
-// GET WEEKLY WINNER (with optional filters)
-// ==========================================
 
 export const getWeeklyWinners = async (req, res) => {
     try {
