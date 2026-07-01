@@ -292,14 +292,14 @@ export async function getWeeklyScore(req, res) {
 
 export async function getWinners(req, res) {
   try {
+
     const now = new Date();
     const { days, daily, weekly, lastWeek } = req.query;
-console.log('Query params:', { days, daily, weekly, lastWeek });
     // ── DAILY: Current day attempters + ONE winner ──
     if (daily === 'true') {
       const startOfDay = new Date(now);
       startOfDay.setHours(0, 0, 0, 0);
-      
+
       const endOfDay = new Date(now);
       endOfDay.setHours(23, 59, 59, 999);
 
@@ -362,6 +362,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
             userName: '$user.name',
             email: '$user.email',
             profilePicture: '$user.profilePicture',
+            score: '$correctAnswers',
             stats: {
               totalQuestions: 1,
               correctAnswers: 1,
@@ -401,6 +402,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
           name: dailyWinner.userId.name,
           email: dailyWinner.userId.email,
           profilePicture: dailyWinner.userId.profilePicture || null,
+          score: winnerStats?.stats?.correctAnswers ?? dailyWinner.score ?? 0, 
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: dailyWinner.score || 0,
@@ -436,7 +438,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
       const diff = now.getDate() - day + (day === 0 ? -6 : 1);
       startOfWeek.setDate(diff);
       startOfWeek.setHours(0, 0, 0, 0);
-      
+
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 6);
       endOfWeek.setHours(23, 59, 59, 999);
@@ -500,6 +502,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
             userName: '$user.name',
             email: '$user.email',
             profilePicture: '$user.profilePicture',
+            score: '$correctAnswers',
             stats: {
               totalQuestions: 1,
               correctAnswers: 1,
@@ -548,6 +551,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
           name: weeklyWinner.userId.name,
           email: weeklyWinner.userId.email,
           profilePicture: weeklyWinner.userId.profilePicture || null,
+          score: winnerStats?.stats?.correctAnswers ?? dailyWinner.score ?? 0,
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: weeklyWinner.score || 0,
@@ -586,15 +590,15 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
     // ── LAST WEEK: All attempters + ONLY ONE winner ──
     if (lastWeek === 'true') {
       const currentDay = now.getDay();
-      
+
       // Calculate previous week's Monday and Sunday
       let prevWeekStart, prevWeekEnd;
-      
+
       if (currentDay === 1) {
         prevWeekStart = new Date(now);
         prevWeekStart.setDate(now.getDate() - 7);
         prevWeekStart.setHours(0, 0, 0, 0);
-        
+
         prevWeekEnd = new Date(now);
         prevWeekEnd.setDate(now.getDate() - 1);
         prevWeekEnd.setHours(23, 59, 59, 999);
@@ -602,7 +606,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
         prevWeekStart = new Date(now);
         prevWeekStart.setDate(now.getDate() - currentDay - 6);
         prevWeekStart.setHours(0, 0, 0, 0);
-        
+
         prevWeekEnd = new Date(now);
         prevWeekEnd.setDate(now.getDate() - currentDay);
         prevWeekEnd.setHours(23, 59, 59, 999);
@@ -667,6 +671,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
             userName: '$user.name',
             email: '$user.email',
             profilePicture: '$user.profilePicture',
+            score: '$correctAnswers',  
             stats: {
               totalQuestions: 1,
               correctAnswers: 1,
@@ -715,6 +720,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
           name: lastWeekWinner.userId.name,
           email: lastWeekWinner.userId.email,
           profilePicture: lastWeekWinner.userId.profilePicture || null,
+          score: winnerStats?.stats?.correctAnswers ?? weeklyWinner.score ?? 0, 
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: lastWeekWinner.score || 0,
@@ -791,6 +797,7 @@ console.log('Query params:', { days, daily, weekly, lastWeek });
             userName: '$user.name',
             email: '$user.email',
             profilePicture: '$user.profilePicture',
+            score: '$correctAnswers',
             correctAnswers: 1,
             totalTime: 1,
             firstAttemptAt: 1,
