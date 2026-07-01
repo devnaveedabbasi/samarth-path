@@ -1,7 +1,17 @@
+import bcrypt from "bcryptjs";
 import User from "../../models/User.model.js";
+import Subscription from "../../models/Subscription.model.js";
 import NotificationService from "../../services/notification.service.js";
 import { ApiResponse } from "../../utils/apiResponse.js";
 import { ApiError } from "../../utils/errorHandler.js";
+import { isValidIndianPhone } from "../user/auth.controller.js";
+
+const SALT_ROUNDS = 10;
+const TRIAL_DAYS = 3;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_PLAN_NAME = "Monthly Basic";
+const DEFAULT_PLAN_PRICE = 199;
+const DEFAULT_DURATION_DAYS = 30;
 
 // ── GET /users  (with pagination, search, status filter) ──────────────────────
 export async function AllUsers(req, res) {
@@ -131,5 +141,136 @@ export async function deleteUser(req, res) {
 
   res.status(200).json(
     new ApiResponse(200, null, "User deleted successfully.")
+  );
+}
+
+// ── POST /users  (admin creates a user directly, bypassing OTP) ──────────────
+export async function createUser(req, res) {
+  const name = String(req.body.name || "").trim();
+  const address = String(req.body.address || "").trim();
+  const phone = String(req.body.phone || "").trim();
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+  const role = ["user", "admin"].includes(req.body.role) ? req.body.role : "user";
+
+  if (!name || !phone || !email || !password) {
+    throw new ApiError(400, "Name, phone, email, and password are required.");
+  }
+
+  if (!isValidIndianPhone(phone)) {
+    throw new ApiError(400, "Invalid phone number format. Must be a valid Indian mobile number.");
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    throw new ApiError(400, "Invalid email format.");
+  }
+
+  if (password.length < 8) {
+    throw new ApiError(400, "Password must be at least 8 characters.");
+  }
+
+  const existingPhone = await User.findOne({ phone }).select("_id");
+  if (existingPhone) {
+    throw new ApiError(408, "Phone number already registered.");
+  }
+
+  const existingEmail = await User.findOne({ email }).select("_id");
+  if (existingEmail) {
+    throw new ApiError(408, "Email already registered.");
+  }
+
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+  // Admin-created users are pre-verified/approved — they don't go through the OTP flow.
+  const user = await User.create({
+    name,
+    phone,
+    email,
+    address: address || undefined,
+    password: hashedPassword,
+    role,
+    status: "approved",
+    isPhoneVerified: true,
+    isEmailVerified: true,
+  });
+
+  // Same trial subscription every normal registration receives, so the user
+  // is stored exactly like one created through public registration.
+  const now = new Date();
+  const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
+  const subscription = await Subscription.create({
+    userId: user._id,
+    planName: "Trial",
+    price: 0,
+    status: "trial",
+    startDate: now,
+    expiryDate: trialEndDate,
+    trialStartDate: now,
+    trialEndDate,
+  });
+
+  user.subscriptionID = subscription._id;
+  user.isSubscribed = false;
+  await user.save();
+
+  const created = await User.findById(user._id).populate("subscriptionID");
+
+  res.status(201).json(
+    new ApiResponse(201, created, "User created successfully.")
+  );
+}
+
+// ── POST /users/:userId/grant-subscription  (admin activates a subscription, no payment) ──
+export async function grantSubscription(req, res) {
+  const { userId } = req.params;
+  const { planName, price, durationDays, startDate, expiryDate, notes } = req.body;
+
+  const user = await User.findOne({ _id: userId, role: "user" });
+  if (!user) throw new ApiError(404, "User not found.");
+
+  const start = startDate ? new Date(startDate) : new Date();
+  if (isNaN(start.getTime())) {
+    throw new ApiError(400, "Invalid start date.");
+  }
+
+  let expiry;
+  if (expiryDate) {
+    expiry = new Date(expiryDate);
+    if (isNaN(expiry.getTime())) {
+      throw new ApiError(400, "Invalid expiry date.");
+    }
+  } else {
+    const days = Number(durationDays) > 0 ? Number(durationDays) : DEFAULT_DURATION_DAYS;
+    expiry = new Date(start.getTime() + days * DAY_MS);
+  }
+
+  if (expiry <= start) {
+    throw new ApiError(400, "Expiry date must be after start date.");
+  }
+
+  let subscription = await Subscription.findOne({ userId });
+  if (!subscription) {
+    subscription = new Subscription({ userId, expiryDate: expiry });
+  }
+
+  subscription.planName = String(planName || "").trim() || subscription.planName || DEFAULT_PLAN_NAME;
+  subscription.price = price !== undefined && price !== null && price !== "" ? Number(price) : (subscription.price ?? DEFAULT_PLAN_PRICE);
+  subscription.status = "active";
+  subscription.startDate = start;
+  subscription.expiryDate = expiry;
+  subscription.paymentStatus = "not_applicable";
+  subscription.grantedByAdmin = true;
+  subscription.grantedBy = req.user._id;
+  subscription.adminNotes = notes ? String(notes).trim() : subscription.adminNotes;
+
+  await subscription.save();
+
+  user.subscriptionID = subscription._id;
+  user.isSubscribed = true;
+  await user.save();
+
+  res.status(200).json(
+    new ApiResponse(200, subscription, "Subscription granted successfully.")
   );
 }

@@ -9,10 +9,12 @@ const router = Router();
 router.use(authenticateToken);
 router.use(requireRole('admin'));
 
-router.get('/stats',             asyncHandler(userController.getUserStats));
-router.get('/',                  asyncHandler(userController.AllUsers));
-router.get('/:userId',           asyncHandler(userController.getUserById));
-router.put('/:userId/status',    asyncHandler(userController.updateUserStatus));
-router.delete('/:userId',        asyncHandler(userController.deleteUser));
+router.get('/stats',                       asyncHandler(userController.getUserStats));
+router.get('/',                            asyncHandler(userController.AllUsers));
+router.post('/',                           asyncHandler(userController.createUser));
+router.get('/:userId',                     asyncHandler(userController.getUserById));
+router.put('/:userId/status',              asyncHandler(userController.updateUserStatus));
+router.post('/:userId/grant-subscription', asyncHandler(userController.grantSubscription));
+router.delete('/:userId',                  asyncHandler(userController.deleteUser));
 
 export default router;

@@ -98,7 +98,21 @@ const subscriptionSchema = new mongoose.Schema({
   paymentHistory: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'SubscriptionPayment'
-  }]
+  }],
+  // Admin-granted subscription tracking (no payment involved)
+  grantedByAdmin: {
+    type: Boolean,
+    default: false
+  },
+  grantedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  adminNotes: {
+    type: String,
+    default: null
+  }
 }, {
   timestamps: true
 });
