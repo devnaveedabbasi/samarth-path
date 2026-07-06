@@ -20,12 +20,23 @@ const prizeSchema = new mongoose.Schema({
     type: String,
     enum: ['weekly', 'daily'],
     default: 'weekly'
+  },
+  // Prize is assigned to one specific Winner selection (mirrors Winner.prizeId)
+  winnerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Winner',
+    required: true,
+    unique: true
+  },
+  assignedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
   timestamps: true
 });
 
-prizeSchema.index({ weekNumber: 1, year: 1, prizeType: 1 }, { unique: true });
+prizeSchema.index({ weekNumber: 1, year: 1, prizeType: 1 });
 
 const Prize = mongoose.models.Prize || mongoose.model('Prize', prizeSchema);
 export default Prize;

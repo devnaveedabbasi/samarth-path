@@ -1,6 +1,7 @@
 import DailyContent from '../models/Content.model.js';
 import QuizAttempt from '../models/QuizAttempt.model.js';
 import Winner from '../models/Winner.model.js';
+import Prize from '../models/Prize.model.js';
 import { ApiError } from '../utils/errorHandler.js';
 import { ApiResponse } from '../utils/apiResponse.js';
 
@@ -127,6 +128,85 @@ export async function getWeeklyScore(req, res) {
         totalParticipants: allScores.length,   // kitne log participate kar rahe hain
       },
       'Weekly score retrieved successfully.'
+    )
+  );
+}
+
+// ─── Get My Prizes (all prizes won by the logged-in user) ────
+export async function getMyPrizes(req, res) {
+  const userId = req.user._id;
+
+  const winners = await Winner.find({ userId, prizeId: { $ne: null } })
+    .populate('prizeId')
+    .sort({ winnerDate: -1, createdAt: -1 })
+    .lean();
+
+  const prizes = winners
+    .filter(w => w.prizeId)
+    .map(w => ({
+      winnerId: w._id,
+      cycleType: w.cycleType,
+      weekNumber: w.weekNumber,
+      year: w.year,
+      winnerDate: w.winnerDate,
+      rank: w.rank,
+      score: w.score,
+      prize: {
+        id: w.prizeId._id,
+        title: w.prizeId.title,
+        description: w.prizeId.description,
+        imageUrl: w.prizeId.imageUrl,
+        prizeType: w.prizeId.prizeType,
+        assignedAt: w.prizeId.createdAt
+      }
+    }));
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { count: prizes.length, prizes },
+      'Your prizes retrieved successfully.'
+    )
+  );
+}
+
+// ─── Get Prize Details (single prize, only if it belongs to the user) ──
+export async function getPrizeDetails(req, res) {
+  const userId = req.user._id;
+  const { prizeId } = req.params;
+
+  const prize = await Prize.findById(prizeId)
+    .populate('winnerId', 'userId cycleType weekNumber year winnerDate rank score');
+
+  if (!prize || !prize.winnerId) {
+    throw new ApiError(404, 'Prize not found.');
+  }
+
+  if (prize.winnerId.userId.toString() !== userId.toString()) {
+    throw new ApiError(403, 'You are not authorized to view this prize.');
+  }
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        id: prize._id,
+        title: prize.title,
+        description: prize.description,
+        imageUrl: prize.imageUrl,
+        prizeType: prize.prizeType,
+        assignedAt: prize.createdAt,
+        winner: {
+          winnerId: prize.winnerId._id,
+          cycleType: prize.winnerId.cycleType,
+          weekNumber: prize.winnerId.weekNumber,
+          year: prize.winnerId.year,
+          winnerDate: prize.winnerId.winnerDate,
+          rank: prize.winnerId.rank,
+          score: prize.winnerId.score
+        }
+      },
+      'Prize details retrieved successfully.'
     )
   );
 }

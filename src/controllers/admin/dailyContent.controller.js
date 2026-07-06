@@ -826,31 +826,7 @@ export async function deleteVideoContent(req, res) {
 //   );
 // }
 
-export async function createPrize(req, res) {
-  const { title, description, imageUrl, weekNumber, year, prizeType = 'weekly' } = req.body;
 
-  if (!title || weekNumber === undefined || !year) {
-    throw new ApiError(400, 'Title, week number, and year are required.');
-  }
-
-  const existingPrize = await Prize.findOne({ weekNumber, year, prizeType });
-  if (existingPrize) {
-    throw new ApiError(400, `Prize for ${prizeType} period already exists.`);
-  }
-
-  const prize = await Prize.create({
-    title,
-    description,
-    imageUrl,
-    weekNumber,
-    year,
-    prizeType
-  });
-
-  res.status(201).json(
-    new ApiResponse(201, prize, 'Prize created successfully.')
-  );
-}
 
 export async function calculateWeeklyWinners(req, res) {
   const { weekNumber, year } = req.body;

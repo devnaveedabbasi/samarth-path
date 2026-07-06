@@ -4,7 +4,9 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import {
   getWinners,
-  getWeeklyScore
+  getWeeklyScore,
+  getMyPrizes,
+  getPrizeDetails
 } from '../../controllers/quizAndWinners.controller.js';
 import WinnerService from '../../services/winner.service.js';
 const router = Router();
@@ -12,6 +14,10 @@ router.use(authMiddleware);
 // Public routes
 router.get('/', asyncHandler(getWinners));
 router.get('/score',asyncHandler(getWeeklyScore));
+
+// Prize routes
+router.get('/prizes', asyncHandler(getMyPrizes));
+router.get('/prizes/:prizeId', asyncHandler(getPrizeDetails));
 
 // routes/admin.routes.js mein add karo — temporarily
 router.post('/announce-winners', async (req, res) => {

@@ -263,6 +263,30 @@ export class NotificationService {
   }
 
   /**
+   * Send PRIZE ASSIGNED notification
+   */
+  static async sendPrizeAssignedNotification(winnerId, prizeId, prizeTitle, cycleType) {
+    try {
+      const cycleLabel = cycleType === 'daily' ? 'Daily' : 'Weekly';
+
+      await this.createNotification(winnerId, {
+        type: 'custom',
+        title: '🎁 A Prize Has Been Assigned to You!',
+        body: `You've been awarded "${prizeTitle}" for winning the ${cycleLabel} Quiz Challenge.`,
+        status: 'success',
+        data: { prizeTitle, cycleType },
+        relatedEntityId: prizeId,
+        relatedEntityType: 'prize'
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error sending prize assigned notification:', error);
+      throw new ApiError(500, 'Failed to send prize assigned notification', error.message);
+    }
+  }
+
+  /**
    * Send winner announcement email (supports both daily and weekly)
    */
   static async sendWinnerEmail(email, name, rank, score, cycleType, weekNumber = null, year = null, dayNumber = null, month = null, dayYear = null) {
