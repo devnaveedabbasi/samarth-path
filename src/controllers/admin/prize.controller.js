@@ -199,14 +199,10 @@ export async function updatePrize(req, res) {
 export async function deletePrize(req, res) {
   const { prizeId } = req.params;
 
-  const prize = await Prize.findOneAndUpdate(
-    { _id: prizeId, isDeleted: { $ne: true } },
-    { $set: { isDeleted: true } },
-    { new: true }
-  );
+  const prize = await Prize.findByIdAndDelete(prizeId);
 
   if (!prize) {
-    throw new ApiError(404, 'Prize not found or already deleted.');
+    throw new ApiError(404, 'Prize not found.');
   }
 
   res.status(200).json(

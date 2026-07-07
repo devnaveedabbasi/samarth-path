@@ -1,6 +1,8 @@
 import QuizAttempt from '../../models/QuizAttempt.model.js';
 import Winner from '../../models/Winner.model.js';
 import User from '../../models/User.model.js';
+import Content from '../../models/Content.model.js';
+import Prize from '../../models/Prize.model.js';
 import mongoose from 'mongoose';
 import NotificationService from '../../services/notification.service.js';
 
@@ -285,6 +287,23 @@ export const selectDailyWinners = async (req, res) => {
             weekNumber: getWeekNumber(today)
         });
 
+        // 🎁 Auto-assign today's quiz prize (added when the quiz was created) to this winner
+        try {
+            const todaysQuiz = await Content.findOne({
+                contentType: 'quiz',
+                date: { $gte: startOfDay, $lt: endOfDay }
+            });
+            if (todaysQuiz) {
+                const prize = await Prize.findOne({ quizId: todaysQuiz._id });
+                if (prize) {
+                    winner.prizeId = prize._id;
+                    await winner.save();
+                }
+            }
+        } catch (prizeError) {
+            console.error('Error auto-assigning daily prize:', prizeError);
+        }
+
         // 🔔 Send Daily Winner Notification
         try {
             await NotificationService.sendDailyWinnerNotification(
@@ -302,7 +321,8 @@ export const selectDailyWinners = async (req, res) => {
 
         // Populate user details for response
         const populatedWinner = await Winner.findById(winner._id)
-            .populate('userId', 'name email profilePicture');
+            .populate('userId', 'name email profilePicture')
+            .populate('prizeId');
 
         res.status(201).json({
             success: true,
@@ -321,7 +341,13 @@ export const selectDailyWinners = async (req, res) => {
                         totalTime: stats.totalTime,
                         firstAttemptAt: stats.firstAttemptAt
                     },
-                    selectedAt: populatedWinner.winnerDate
+                    selectedAt: populatedWinner.winnerDate,
+                    prize: populatedWinner.prizeId ? {
+                        id: populatedWinner.prizeId._id,
+                        title: populatedWinner.prizeId.title,
+                        description: populatedWinner.prizeId.description,
+                        imageUrl: populatedWinner.prizeId.imageUrl
+                    } : null
                 }
             }
         });
@@ -680,6 +706,21 @@ export const selectWeeklyWinner = async (req, res) => {
             dayNumber: prevWeekStart.getDate()
         });
 
+        // 🎁 Auto-assign this week's prize (created ahead of time in Prizes Management) to this winner
+        try {
+            const prize = await Prize.findOne({
+                prizeType: 'weekly',
+                weekNumber: winner.weekNumber,
+                year: winner.year
+            });
+            if (prize) {
+                winner.prizeId = prize._id;
+                await winner.save();
+            }
+        } catch (prizeError) {
+            console.error('Error auto-assigning weekly prize:', prizeError);
+        }
+
         // 🔔 Send Weekly Winner Notification
         try {
             await NotificationService.sendWeeklyWinnerNotification(
@@ -697,7 +738,8 @@ export const selectWeeklyWinner = async (req, res) => {
 
         // Populate user details for response
         const populatedWinner = await Winner.findById(winner._id)
-            .populate('userId', 'name email profilePicture');
+            .populate('userId', 'name email profilePicture')
+            .populate('prizeId');
 
         res.status(201).json({
             success: true,
@@ -721,7 +763,13 @@ export const selectWeeklyWinner = async (req, res) => {
                     weekRange: {
                         start: prevWeekStart,
                         end: prevWeekEnd
-                    }
+                    },
+                    prize: populatedWinner.prizeId ? {
+                        id: populatedWinner.prizeId._id,
+                        title: populatedWinner.prizeId.title,
+                        description: populatedWinner.prizeId.description,
+                        imageUrl: populatedWinner.prizeId.imageUrl
+                    } : null
                 }
             }
         });

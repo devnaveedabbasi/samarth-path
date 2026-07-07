@@ -40,7 +40,16 @@ const winnerSchema = new mongoose.Schema({
 
 // Index for efficient winner queries
 winnerSchema.index({ weekNumber: 1, year: 1, cycleType: 1 });
-winnerSchema.index({ userId: 1, weekNumber: 1, year: 1, cycleType: 1 }, { unique: true });
+
+// A user can only be crowned WEEKLY winner once per week — weekNumber/year
+// are meaningful at week granularity, so this constraint only makes sense
+// for cycleType: 'weekly'. Applying it to 'daily' too (as a single shared
+// index) would wrongly block the same user from winning on two different
+// days within the same week, since weekNumber/year don't change within a week.
+winnerSchema.index(
+  { userId: 1, weekNumber: 1, year: 1, cycleType: 1 },
+  { unique: true, partialFilterExpression: { cycleType: 'weekly' } }
+);
 
 const Winner = mongoose.models.Winner || mongoose.model('Winner', winnerSchema);
 export default Winner;

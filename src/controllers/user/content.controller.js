@@ -12,6 +12,7 @@ import { getPKTDateRange } from '../../utils/date.util.js';
 import { enrichContent } from '../../utils/contentResponse.js';
 import User from '../../models/User.model.js';
 import Subscription from '../../models/Subscription.model.js';
+import Prize from '../../models/Prize.model.js';
 // Helper function to check if content is unlocked based on current time
 
 
@@ -88,12 +89,18 @@ export async function getContentById(req, res) {
   const content = await Content.findOne({ _id: contentId, isDeleted: { $ne: true } });
   if (!content) throw new ApiError(404, 'Content not found.');
 
-  const [userLike, isBookmarked, quizAttempt, likesCount, commentsCount] = await Promise.all([
+  const [userLike, isBookmarked, quizAttempt, likesCount, commentsCount, prize, weeklyPrize] = await Promise.all([
     Like.findOne({ userId, contentId: content._id }),
     Bookmark.findOne({ userId, contentId: content._id }),
     QuizAttempt.findOne({ userId, contentId: content._id }),
     Like.countDocuments({ contentId: content._id }),
     Comment.countDocuments({ contentId: content._id }),
+    content.contentType === 'quiz' ? Prize.findOne({ quizId: content._id }) : null,
+    content.contentType === 'quiz' ? Prize.findOne({
+      prizeType: 'weekly',
+      weekNumber: moment(content.date).isoWeek(),
+      year: moment(content.date).year(),
+    }) : null,
   ]);
 
   const result = {
@@ -110,12 +117,29 @@ export async function getContentById(req, res) {
     ...(content.contentType === 'text' && { textContent: content.textContent }),
     ...(content.contentType === 'video' && { videoContent: content.videoContent }),
     ...(content.contentType === 'quiz' && {
-      quizContent: content.quizContent,
+      quizContent: {
+        ...content.quizContent.toObject(),
+        prize: prize ? {
+          id: prize._id,
+          title: prize.title,
+          description: prize.description,
+          imageUrl: prize.imageUrl,
+        } : null,
+        weeklyPrize: weeklyPrize ? {
+          id: weeklyPrize._id,
+          title: weeklyPrize.title,
+          description: weeklyPrize.description,
+          imageUrl: weeklyPrize.imageUrl,
+          weekNumber: weeklyPrize.weekNumber,
+          year: weeklyPrize.year,
+        } : null,
+      },
       quizAttempt: quizAttempt ? {
         selectedOptionId: quizAttempt.selectedOptionId,
         isCorrect: quizAttempt.isCorrect,
         timeTakenSeconds: quizAttempt.timeTakenSeconds,
       } : null,
+
     }),
   };
 
