@@ -25,6 +25,8 @@ router.get('/quiz/:contentId', asyncHandler(adminDailyContentController.getQuizB
 router.put('/quiz/:contentId', asyncHandler(adminDailyContentController.updateQuizContent));
 router.delete('/quiz/:contentId', asyncHandler(adminDailyContentController.deleteQuizContent));
 router.get('/quiz/:contentId/attempts', asyncHandler(adminDailyContentController.getQuizAttempts));
+router.post('/quiz/:contentId/prize', upload.single('image'), asyncHandler(adminDailyContentController.createDailyPrizeForQuiz));
+router.get('/quiz/:contentId/prize', asyncHandler(adminDailyContentController.getDailyPrizeForQuiz));
 
 
 // VIDEO ROUTES
@@ -40,8 +42,7 @@ router.delete('/video/:contentId', asyncHandler(adminDailyContentController.dele
 // router.put('/:contentId', asyncHandler(adminDailyContentController.updateContent));
 // router.delete('/:contentId', asyncHandler(adminDailyContentController.deleteContent));
 
-// Prize management
-router.post('/prize/create', asyncHandler(adminDailyContentController.createPrize));
+// Winner calculation (legacy bulk calculation, unrelated to Prize CRUD above)
 router.post('/winners/calculate', asyncHandler(adminDailyContentController.calculateWeeklyWinners));
 router.get('/:contentId/analytics', asyncHandler(adminDailyContentController.getContentAnalytics));
 

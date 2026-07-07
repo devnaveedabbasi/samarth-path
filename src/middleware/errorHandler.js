@@ -34,12 +34,14 @@ const errorHandler = (err, req, res, next) => {
   //  Duplicate Key
   // ========================
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+    const fields = Object.entries(err.keyValue || {})
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(', ');
 
     return res.status(409).json({
       success: false,
       code: 409,
-      message: `${field} already exists`,
+      message: `A record with the same ${fields} already exists.`,
       data: null,
     });
   }

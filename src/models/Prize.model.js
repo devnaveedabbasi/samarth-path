@@ -8,35 +8,42 @@ const prizeSchema = new mongoose.Schema({
   },
   description: String,
   imageUrl: String,
-  weekNumber: {
-    type: Number,
-    required: true
-  },
-  year: {
-    type: Number,
-    required: true
-  },
   prizeType: {
     type: String,
-    enum: ['weekly', 'daily'],
-    default: 'weekly'
+    enum: ['daily', 'weekly'],
+    required: true
   },
-  // Prize is assigned to one specific Winner selection (mirrors Winner.prizeId)
-  winnerId: {
+  // Daily prize is tied to the specific quiz (Content doc) it belongs to
+  quizId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Winner',
-    required: true,
-    unique: true
+    ref: 'Content'
   },
-  assignedBy: {
+  // Weekly prize is tied to a week/year, not to a specific quiz
+  weekNumber: Number,
+  year: Number,
+  createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  isDeleted: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
 });
 
-prizeSchema.index({ weekNumber: 1, year: 1, prizeType: 1 });
+// One prize per quiz (daily prizes only)
+prizeSchema.index(
+  { quizId: 1 },
+  { unique: true, partialFilterExpression: { quizId: { $exists: true } } }
+);
+
+// One prize per week/year (weekly prizes only)
+prizeSchema.index(
+  { weekNumber: 1, year: 1, prizeType: 1 },
+  { unique: true, partialFilterExpression: { prizeType: 'weekly' } }
+);
 
 const Prize = mongoose.models.Prize || mongoose.model('Prize', prizeSchema);
 export default Prize;

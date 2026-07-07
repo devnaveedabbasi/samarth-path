@@ -69,7 +69,8 @@ export async function createTextContent(req, res) {
   // 1. Duplicate Check (Range based taake timezone ka masla na ho)
   const existingText = await Content.findOne({
     date: { $gte: startOfDay, $lte: endOfDay },
-    contentType: 'text'
+    contentType: 'text',
+    isDeleted: { $ne: true }
   });
 
   if (existingText) {
@@ -85,15 +86,26 @@ export async function createTextContent(req, res) {
   }) : null;
 
   // 2. Create Content
-  const content = await Content.create({
-    contentType: 'text',
-    unlocksAt: unlocksAt || '08:00',
-    // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
-    // Is se date ke piche janay ka chance khatam ho jata hai
-    date: moment(startOfDay).add(12, 'hours').toDate(),
-    textContent: { title, description, label, image: image ? image.secure_url : null },
-    createdBy: adminId
-  });
+  let content;
+  try {
+    content = await Content.create({
+      contentType: 'text',
+      unlocksAt: unlocksAt || '08:00',
+      // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
+      // Is se date ke piche janay ka chance khatam ho jata hai
+      date: moment(startOfDay).add(12, 'hours').toDate(),
+      textContent: { title, description, label, image: image ? image.secure_url : null },
+      createdBy: adminId
+    });
+  } catch (error) {
+    // Two near-simultaneous requests can both pass the check above before
+    // either has inserted — translate the unique-index failure into the
+    // same friendly error instead of a raw Mongo error.
+    if (error.code === 11000) {
+      throw new ApiError(400, `Text content for this date already exists.`);
+    }
+    throw error;
+  }
 
   await sendContentPublishedNotification(content);
 
@@ -224,11 +236,7 @@ export async function deleteTextContent(req, res) {
   const { contentId } = req.params;
   if (!contentId) throw new ApiError(400, 'Content ID is required.');
 
-  const content = await Content.findOneAndUpdate(
-    { _id: contentId, contentType: 'text' },
-    { $set: { isDeleted: true } },
-    { new: true }
-  );
+  const content = await Content.findOneAndDelete({ _id: contentId, contentType: 'text' });
   if (!content) throw new ApiError(404, 'Content not found.');
 
   res.status(200).json(new ApiResponse(200, null, 'Text content deleted successfully.'));
@@ -269,27 +277,39 @@ export async function createQuizContent(req, res) {
 
   const existingQuiz = await Content.findOne({
     date: quizDate,
-    contentType: 'quiz'
+    contentType: 'quiz',  
+    isDeleted: { $ne: true }
   });
 
   if (existingQuiz) {
     throw new ApiError(400, `Quiz for ${quizDate.toDateString()} already exists.`);
   }
 
-  const content = await Content.create({
-    contentType: 'quiz',
-    unlocksAt,
-    date: quizDate,
-    quizContent: {
-      title,
-      question,
-      options,
-      correctOptionId,
-      timerSeconds,
-      explanation
-    },
-    createdBy: adminId
-  });
+  let content;
+  try {
+    content = await Content.create({
+      contentType: 'quiz',
+      unlocksAt,
+      date: quizDate,
+      quizContent: {
+        title,
+        question,
+        options,
+        correctOptionId,
+        timerSeconds,
+        explanation
+      },
+      createdBy: adminId
+    });
+  } catch (error) {
+    // Two near-simultaneous requests (e.g. a fast double-click) can both pass
+    // the check above before either has inserted — the unique index is the
+    // real guard here, so translate its failure into the same friendly error.
+    if (error.code === 11000) {
+      throw new ApiError(400, `Quiz for ${quizDate.toDateString()} already exists.`);
+    }
+    throw error;
+  }
 
   // Send notification to all users about new quiz
   await sendContentPublishedNotification(content, adminId);
@@ -390,12 +410,8 @@ export async function deleteQuizContent(req, res) {
   const { contentId } = req.params;
   if (!contentId) throw new ApiError(400, 'Content ID is required.');
 
-  const deleted = await Content.findOneAndUpdate(
-    { _id: contentId, contentType: 'quiz' },
-    { $set: { isDeleted: true } },
-    { new: true }
-  );
-  if (!deleted) throw new ApiError(404, 'Quiz not found or already deleted.');
+  const deleted = await Content.findOneAndDelete({ _id: contentId, contentType: 'quiz' });
+  if (!deleted) throw new ApiError(404, 'Quiz not found.');
 
   res.status(200).json(new ApiResponse(200, null, 'Quiz deleted successfully.'));
 }
@@ -425,6 +441,75 @@ export async function getQuizAttempts(req, res) {
       totalAttempts: total,
       currentPage: page
     }, 'Attempts retrieved successfully.')
+  );
+}
+
+
+//  DAILY PRIZE (linked to a specific quiz)
+
+export async function createDailyPrizeForQuiz(req, res) {
+  const adminId = req.user._id;
+  const { contentId } = req.params;
+  const { title, description } = req.body;
+
+  if (!title) {
+    throw new ApiError(400, 'Prize title is required.');
+  }
+
+  const quiz = await Content.findOne({ _id: contentId, contentType: 'quiz' });
+  if (!quiz) {
+    throw new ApiError(404, 'Quiz not found.');
+  }
+
+  const existingPrize = await Prize.findOne({ quizId: contentId, isDeleted: { $ne: true } });
+  if (existingPrize) {
+    throw new ApiError(400, 'A prize has already been added for this quiz. Use update instead.');
+  }
+
+  let imageUrl = null;
+  if (req.file) {
+    const uploaded = await uploadOnS3({
+      localFilePath: req.file.path,
+      mimetype: req.file.mimetype,
+      folder: 'prize-images',
+      originalname: req.file.originalname
+    });
+
+    if (!uploaded) {
+      throw new ApiError(500, 'Prize image upload failed.');
+    }
+    imageUrl = uploaded.secure_url;
+  }
+
+  let prize;
+  try {
+    prize = await Prize.create({
+      title,
+      description,
+      imageUrl,
+      prizeType: 'daily',
+      quizId: quiz._id,
+      createdBy: adminId
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      throw new ApiError(400, 'A prize has already been added for this quiz. Use update instead.');
+    }
+    throw error;
+  }
+
+  res.status(201).json(
+    new ApiResponse(201, prize, 'Daily prize added for this quiz successfully.')
+  );
+}
+
+export async function getDailyPrizeForQuiz(req, res) {
+  const { contentId } = req.params;
+
+  const prize = await Prize.findOne({ quizId: contentId, isDeleted: { $ne: true } });
+
+  res.status(200).json(
+    new ApiResponse(200, prize || null, prize ? 'Daily prize retrieved successfully.' : 'No prize added for this quiz yet.')
   );
 }
 
@@ -583,6 +668,12 @@ export async function createVideoContent(req, res) {
   } catch (error) {
     if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
     if (fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
+    // Two near-simultaneous requests can both pass the pre-emptive soft-delete
+    // above before either has inserted — translate the unique-index failure
+    // into a friendly error instead of the raw Mongo message.
+    if (error.code === 11000) {
+      throw new ApiError(400, `Video content for ${videoDate.toDateString()} already exists.`);
+    }
     throw new ApiError(500, error?.message || "Internal Server Error during upload.");
   }
 }
@@ -757,12 +848,8 @@ export async function deleteVideoContent(req, res) {
   const { contentId } = req.params;
   if (!contentId) throw new ApiError(400, 'Content ID is required.');
 
-  const deleted = await Content.findOneAndUpdate(
-    { _id: contentId, contentType: 'video' },
-    { $set: { isDeleted: true } },
-    { new: true }
-  );
-  if (!deleted) throw new ApiError(404, 'Video content not found or already deleted.');
+  const deleted = await Content.findOneAndDelete({ _id: contentId, contentType: 'video' });
+  if (!deleted) throw new ApiError(404, 'Video content not found.');
 
   res.status(200).json(new ApiResponse(200, null, 'Video content deleted successfully.'));
 }

@@ -132,34 +132,69 @@ export async function getWeeklyScore(req, res) {
   );
 }
 
-// ─── Get My Prizes (all prizes won by the logged-in user) ────
+// ─── Helper: day range (local midnight → 23:59:59.999) for a given date ──
+function getDayRange(date) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+// ─── Get My Prizes (prizes for quizzes/weeks the logged-in user actually won) ──
 export async function getMyPrizes(req, res) {
   const userId = req.user._id;
 
-  const winners = await Winner.find({ userId, prizeId: { $ne: null } })
-    .populate('prizeId')
+  const winners = await Winner.find({ userId })
     .sort({ winnerDate: -1, createdAt: -1 })
     .lean();
 
-  const prizes = winners
-    .filter(w => w.prizeId)
-    .map(w => ({
-      winnerId: w._id,
-      cycleType: w.cycleType,
-      weekNumber: w.weekNumber,
-      year: w.year,
-      winnerDate: w.winnerDate,
-      rank: w.rank,
-      score: w.score,
-      prize: {
-        id: w.prizeId._id,
-        title: w.prizeId.title,
-        description: w.prizeId.description,
-        imageUrl: w.prizeId.imageUrl,
-        prizeType: w.prizeId.prizeType,
-        assignedAt: w.prizeId.createdAt
+  const prizes = [];
+
+  for (const winner of winners) {
+    let prize = null;
+    let quiz = null;
+
+    if (winner.cycleType === 'daily') {
+      const { start, end } = getDayRange(winner.winnerDate || winner.createdAt);
+      quiz = await DailyContent.findOne({
+        contentType: 'quiz',
+        isDeleted: { $ne: true },
+        date: { $gte: start, $lte: end }
+      }).lean();
+
+      if (quiz) {
+        prize = await Prize.findOne({ quizId: quiz._id, isDeleted: { $ne: true } }).lean();
       }
-    }));
+    } else {
+      prize = await Prize.findOne({
+        prizeType: 'weekly',
+        weekNumber: winner.weekNumber,
+        year: winner.year,
+        isDeleted: { $ne: true }
+      }).lean();
+    }
+
+    if (!prize) continue;
+
+    prizes.push({
+      winnerId: winner._id,
+      cycleType: winner.cycleType,
+      weekNumber: winner.weekNumber,
+      year: winner.year,
+      winnerDate: winner.winnerDate,
+      rank: winner.rank,
+      score: winner.score,
+      quiz: quiz ? { id: quiz._id, title: quiz.quizContent?.title, date: quiz.date } : undefined,
+      prize: {
+        id: prize._id,
+        title: prize.title,
+        description: prize.description,
+        imageUrl: prize.imageUrl,
+        prizeType: prize.prizeType
+      }
+    });
+  }
 
   res.status(200).json(
     new ApiResponse(
@@ -170,19 +205,41 @@ export async function getMyPrizes(req, res) {
   );
 }
 
-// ─── Get Prize Details (single prize, only if it belongs to the user) ──
+// ─── Get Prize Details (single prize, only if the user actually won it) ──
 export async function getPrizeDetails(req, res) {
   const userId = req.user._id;
   const { prizeId } = req.params;
 
-  const prize = await Prize.findById(prizeId)
-    .populate('winnerId', 'userId cycleType weekNumber year winnerDate rank score');
-
-  if (!prize || !prize.winnerId) {
+  const prize = await Prize.findOne({ _id: prizeId, isDeleted: { $ne: true } });
+  if (!prize) {
     throw new ApiError(404, 'Prize not found.');
   }
 
-  if (prize.winnerId.userId.toString() !== userId.toString()) {
+  let winner = null;
+  let quiz = null;
+
+  if (prize.prizeType === 'daily') {
+    quiz = await DailyContent.findById(prize.quizId);
+    if (!quiz) {
+      throw new ApiError(404, 'Prize not found.');
+    }
+
+    const { start, end } = getDayRange(quiz.date);
+    winner = await Winner.findOne({
+      userId,
+      cycleType: 'daily',
+      winnerDate: { $gte: start, $lte: end }
+    });
+  } else {
+    winner = await Winner.findOne({
+      userId,
+      cycleType: 'weekly',
+      weekNumber: prize.weekNumber,
+      year: prize.year
+    });
+  }
+
+  if (!winner) {
     throw new ApiError(403, 'You are not authorized to view this prize.');
   }
 
@@ -196,14 +253,15 @@ export async function getPrizeDetails(req, res) {
         imageUrl: prize.imageUrl,
         prizeType: prize.prizeType,
         assignedAt: prize.createdAt,
+        quiz: quiz ? { id: quiz._id, title: quiz.quizContent?.title, date: quiz.date } : undefined,
         winner: {
-          winnerId: prize.winnerId._id,
-          cycleType: prize.winnerId.cycleType,
-          weekNumber: prize.winnerId.weekNumber,
-          year: prize.winnerId.year,
-          winnerDate: prize.winnerId.winnerDate,
-          rank: prize.winnerId.rank,
-          score: prize.winnerId.score
+          winnerId: winner._id,
+          cycleType: winner.cycleType,
+          weekNumber: winner.weekNumber,
+          year: winner.year,
+          winnerDate: winner.winnerDate,
+          rank: winner.rank,
+          score: winner.score
         }
       },
       'Prize details retrieved successfully.'
