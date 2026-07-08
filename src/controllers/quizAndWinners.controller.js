@@ -433,6 +433,40 @@ export async function getWinners(req, res) {
 
     const now = new Date();
     const { days, daily, weekly, lastWeek } = req.query;
+
+    const toPrizeObj = (prizeDoc) =>
+      prizeDoc
+        ? {
+            prizeId: prizeDoc._id,
+            title: prizeDoc.title,
+            description: prizeDoc.description,
+            imageUrl: prizeDoc.imageUrl,
+            prizeType: prizeDoc.prizeType
+          }
+        : null;
+
+    // Marks every participant in `participants` who has ANY announced winner
+    // record (daily or weekly) inside [periodStart, periodEnd] with the prize
+    // they won — not just the single "official" winner of that block's own
+    // cycleType, so e.g. a daily winner from earlier in the week still shows
+    // up as a winner inside the weekly participants list.
+    const markWinnersInParticipants = async (participants, periodStart, periodEnd) => {
+      const periodWinners = await Winner.find({
+        winnerDate: { $gte: periodStart, $lte: periodEnd }
+      }).populate('prizeId', 'title description imageUrl prizeType');
+
+      const winnerMap = new Map();
+      periodWinners.forEach((w) => winnerMap.set(w.userId.toString(), w));
+
+      participants.forEach((item) => {
+        const w = winnerMap.get(item.userId.toString());
+        if (w) {
+          item.isWinner = true;
+          item.prize = toPrizeObj(w.prizeId);
+        }
+      });
+    };
+
     // ── DAILY: Current day attempters + ONE winner ──
     if (daily === 'true') {
       const startOfDay = new Date(now);
@@ -526,7 +560,9 @@ export async function getWinners(req, res) {
           $gte: startOfDay,
           $lt: endOfDay
         }
-      }).populate('userId', 'name email profilePicture');
+      })
+        .populate('userId', 'name email profilePicture')
+        .populate('prizeId', 'title description imageUrl prizeType');
 
       let winner = null;
       if (dailyWinner) {
@@ -540,7 +576,7 @@ export async function getWinners(req, res) {
           name: dailyWinner.userId.name,
           email: dailyWinner.userId.email,
           profilePicture: dailyWinner.userId.profilePicture || null,
-          score: winnerStats?.stats?.correctAnswers ?? dailyWinner.score ?? 0, 
+          score: winnerStats?.stats?.correctAnswers ?? dailyWinner.score ?? 0,
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: dailyWinner.score || 0,
@@ -549,9 +585,21 @@ export async function getWinners(req, res) {
             firstAttemptAt: dailyWinner.winnerDate
           },
           selectedAt: dailyWinner.winnerDate,
-          rank: dailyWinner.rank || 1
+          rank: dailyWinner.rank || 1,
+          prize: dailyWinner.prizeId
+            ? {
+                prizeId: dailyWinner.prizeId._id,
+                title: dailyWinner.prizeId.title,
+                description: dailyWinner.prizeId.description,
+                imageUrl: dailyWinner.prizeId.imageUrl,
+                prizeType: dailyWinner.prizeId.prizeType
+              }
+            : null
         };
       }
+
+      // ✅ Mark any announced winner (daily or weekly) inside allParticipants, with prize image
+      await markWinnersInParticipants(formattedAttempters, startOfDay, endOfDay);
 
       return res.status(200).json(
         new ApiResponse(
@@ -675,7 +723,9 @@ export async function getWinners(req, res) {
         cycleType: 'weekly',
         weekNumber: weekNumber,
         year: now.getFullYear()
-      }).populate('userId', 'name email profilePicture');
+      })
+        .populate('userId', 'name email profilePicture')
+        .populate('prizeId', 'title description imageUrl prizeType');
 
       let winner = null;
       if (weeklyWinner) {
@@ -689,7 +739,7 @@ export async function getWinners(req, res) {
           name: weeklyWinner.userId.name,
           email: weeklyWinner.userId.email,
           profilePicture: weeklyWinner.userId.profilePicture || null,
-          score: winnerStats?.stats?.correctAnswers ?? dailyWinner.score ?? 0,
+          score: winnerStats?.stats?.correctAnswers ?? weeklyWinner.score ?? 0,
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: weeklyWinner.score || 0,
@@ -698,9 +748,21 @@ export async function getWinners(req, res) {
             firstAttemptAt: weeklyWinner.winnerDate
           },
           selectedAt: weeklyWinner.winnerDate,
-          rank: weeklyWinner.rank || 1
+          rank: weeklyWinner.rank || 1,
+          prize: weeklyWinner.prizeId
+            ? {
+                prizeId: weeklyWinner.prizeId._id,
+                title: weeklyWinner.prizeId.title,
+                description: weeklyWinner.prizeId.description,
+                imageUrl: weeklyWinner.prizeId.imageUrl,
+                prizeType: weeklyWinner.prizeId.prizeType
+              }
+            : null
         };
       }
+
+      // ✅ Mark any announced winner (daily or weekly) inside allParticipants, with prize image
+      await markWinnersInParticipants(formattedAttempters, startOfWeek, endOfWeek);
 
       return res.status(200).json(
         new ApiResponse(
@@ -844,7 +906,9 @@ export async function getWinners(req, res) {
           $gte: prevWeekStart,
           $lte: prevWeekEnd
         }
-      }).populate('userId', 'name email profilePicture');
+      })
+        .populate('userId', 'name email profilePicture')
+        .populate('prizeId', 'title description imageUrl prizeType');
 
       let winner = null;
       if (lastWeekWinner) {
@@ -858,7 +922,7 @@ export async function getWinners(req, res) {
           name: lastWeekWinner.userId.name,
           email: lastWeekWinner.userId.email,
           profilePicture: lastWeekWinner.userId.profilePicture || null,
-          score: winnerStats?.stats?.correctAnswers ?? weeklyWinner.score ?? 0, 
+          score: winnerStats?.stats?.correctAnswers ?? lastWeekWinner.score ?? 0,
           stats: winnerStats?.stats || {
             totalQuestions: 0,
             correctAnswers: lastWeekWinner.score || 0,
@@ -867,9 +931,21 @@ export async function getWinners(req, res) {
             firstAttemptAt: lastWeekWinner.winnerDate
           },
           selectedAt: lastWeekWinner.winnerDate,
-          rank: lastWeekWinner.rank || 1
+          rank: lastWeekWinner.rank || 1,
+          prize: lastWeekWinner.prizeId
+            ? {
+                prizeId: lastWeekWinner.prizeId._id,
+                title: lastWeekWinner.prizeId.title,
+                description: lastWeekWinner.prizeId.description,
+                imageUrl: lastWeekWinner.prizeId.imageUrl,
+                prizeType: lastWeekWinner.prizeId.prizeType
+              }
+            : null
         };
       }
+
+      // ✅ Mark any announced winner (daily or weekly) inside allParticipants, with prize image
+      await markWinnersInParticipants(formattedAttempters, prevWeekStart, prevWeekEnd);
 
       return res.status(200).json(
         new ApiResponse(
@@ -949,6 +1025,9 @@ export async function getWinners(req, res) {
         ...user
       }));
 
+      // ✅ Mark whoever was an announced winner (daily or weekly) in the last 10 days, with prize image
+      await markWinnersInParticipants(last10DaysUsers, last10DaysDate, now);
+
       return res.status(200).json(
         new ApiResponse(
           200,
@@ -1005,6 +1084,19 @@ export async function getWinners(req, res) {
       ...user,
       isTopThree: index < 3
     }));
+
+    // ✅ Mark any announced winner (daily or weekly) inside allParticipants, with prize image
+    const startOfCurrentWeek = new Date(now);
+    const currentDayNum = now.getDay();
+    const currentWeekDiff = now.getDate() - currentDayNum + (currentDayNum === 0 ? -6 : 1);
+    startOfCurrentWeek.setDate(currentWeekDiff);
+    startOfCurrentWeek.setHours(0, 0, 0, 0);
+
+    const endOfCurrentWeek = new Date(startOfCurrentWeek);
+    endOfCurrentWeek.setDate(startOfCurrentWeek.getDate() + 6);
+    endOfCurrentWeek.setHours(23, 59, 59, 999);
+
+    await markWinnersInParticipants(currentWeekAllUsers, startOfCurrentWeek, endOfCurrentWeek);
 
     return res.status(200).json(
       new ApiResponse(
