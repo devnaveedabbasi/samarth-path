@@ -6,12 +6,14 @@ import QuizAttempt from '../../models/QuizAttempt.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import moment from 'moment-timezone';
+import ExcelJS from 'exceljs';
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 import fs from "fs";
 import { uploadOnS3 } from '../../utils/s3.js';
 import { sendContentPublishedNotification } from '../notification.controller.js';
+import { isUnlockTimePassed } from '../../utils/date.util.js';
 
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -86,16 +88,23 @@ export async function createTextContent(req, res) {
   }) : null;
 
   // 2. Create Content
+  const resolvedUnlocksAt = unlocksAt || '08:00';
+  const initiallyActive = isUnlockTimePassed(startOfDay, resolvedUnlocksAt);
+
   let content;
   try {
     content = await Content.create({
       contentType: 'text',
-      unlocksAt: unlocksAt || '08:00',
+      unlocksAt: resolvedUnlocksAt,
       // Forcefully UTC mein 12:00 PM par save karein taake date hamesha wahi rahay
       // Is se date ke piche janay ka chance khatam ho jata hai
       date: moment(startOfDay).add(12, 'hours').toDate(),
       textContent: { title, description, label, image: image ? image.secure_url : null },
-      createdBy: adminId
+      createdBy: adminId,
+      // Locked until unlocksAt (today's unlock cron flips it on) unless that
+      // time has already passed today, in which case publish it right away.
+      isActive: initiallyActive,
+      isNotified: initiallyActive
     });
   } catch (error) {
     // Two near-simultaneous requests can both pass the check above before
@@ -107,7 +116,9 @@ export async function createTextContent(req, res) {
     throw error;
   }
 
-  await sendContentPublishedNotification(content);
+  if (initiallyActive) {
+    await sendContentPublishedNotification(content);
+  }
 
   res.status(201).json(
     new ApiResponse(201, content, 'Text content scheduled successfully.')
@@ -285,6 +296,8 @@ export async function createQuizContent(req, res) {
     throw new ApiError(400, `Quiz for ${quizDate.toDateString()} already exists.`);
   }
 
+  const initiallyActive = isUnlockTimePassed(quizDate, unlocksAt);
+
   let content;
   try {
     content = await Content.create({
@@ -299,7 +312,11 @@ export async function createQuizContent(req, res) {
         timerSeconds,
         explanation
       },
-      createdBy: adminId
+      createdBy: adminId,
+      // Locked until unlocksAt (today's unlock cron flips it on) unless that
+      // time has already passed today, in which case publish it right away.
+      isActive: initiallyActive,
+      isNotified: initiallyActive
     });
   } catch (error) {
     // Two near-simultaneous requests (e.g. a fast double-click) can both pass
@@ -311,8 +328,10 @@ export async function createQuizContent(req, res) {
     throw error;
   }
 
-  // Send notification to all users about new quiz
-  await sendContentPublishedNotification(content, adminId);
+  // Send notification to all users about new quiz — only if it's actually visible now
+  if (initiallyActive) {
+    await sendContentPublishedNotification(content, adminId);
+  }
 
   res.status(201).json(
     new ApiResponse(201, content, 'Quiz with 4 options created successfully.')
@@ -442,6 +461,97 @@ export async function getQuizAttempts(req, res) {
       currentPage: page
     }, 'Attempts retrieved successfully.')
   );
+}
+
+// Resolve the Content(quiz) doc for a given calendar date, using the same
+// date-normalization convention as createQuizContent (local midnight, no tz lib).
+async function resolveQuizContentForDate(dateStr) {
+  const target = dateStr ? new Date(dateStr) : new Date();
+  target.setHours(0, 0, 0, 0);
+  const nextDay = new Date(target);
+  nextDay.setDate(nextDay.getDate() + 1);
+
+  return Content.findOne({
+    contentType: 'quiz',
+    date: { $gte: target, $lt: nextDay },
+    isDeleted: { $ne: true }
+  });
+}
+
+export async function getQuizAttemptsByDate(req, res) {
+  const { date, page = 1, limit = 20 } = req.query;
+  if (!date) throw new ApiError(400, 'date query param is required (YYYY-MM-DD).');
+
+  const quiz = await resolveQuizContentForDate(date);
+  if (!quiz) {
+    return res.status(200).json(new ApiResponse(200, {
+      quiz: null, attempts: [], totalAttempts: 0, currentPage: 1, totalPages: 0
+    }, 'No quiz found for this date.'));
+  }
+
+  const filter = { contentId: quiz._id };
+  const [attempts, total] = await Promise.all([
+    QuizAttempt.find(filter)
+      .populate('userId', 'name email phone')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit),
+    QuizAttempt.countDocuments(filter)
+  ]);
+
+  res.status(200).json(new ApiResponse(200, {
+    quiz: { _id: quiz._id, quizContent: quiz.quizContent, date: quiz.date },
+    attempts, totalAttempts: total, currentPage: parseInt(page),
+    totalPages: Math.ceil(total / limit)
+  }, 'Attempts retrieved successfully.'));
+}
+
+export async function exportQuizAttemptsExcel(req, res) {
+  const { date } = req.query;
+  if (!date) throw new ApiError(400, 'date query param is required (YYYY-MM-DD).');
+
+  const quiz = await resolveQuizContentForDate(date);
+  if (!quiz) throw new ApiError(404, 'No quiz found for this date.');
+
+  const attempts = await QuizAttempt.find({ contentId: quiz._id })
+    .populate('userId', 'name email phone')
+    .sort({ createdAt: 1 });
+
+  const optionTextById = Object.fromEntries(
+    (quiz.quizContent?.options || []).map(o => [o.id, o.text])
+  );
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Quiz Attempts');
+  sheet.columns = [
+    { header: '#', key: 'sno', width: 5 },
+    { header: 'Name', key: 'name', width: 25 },
+    { header: 'Email', key: 'email', width: 30 },
+    { header: 'Phone', key: 'phone', width: 18 },
+    { header: 'Selected Option', key: 'selected', width: 30 },
+    { header: 'Correct Option', key: 'correct', width: 30 },
+    { header: 'Is Correct', key: 'isCorrect', width: 12 },
+    { header: 'Time Taken (s)', key: 'time', width: 15 },
+    { header: 'Attempted At', key: 'attemptedAt', width: 22 },
+  ];
+  sheet.getRow(1).font = { bold: true };
+
+  attempts.forEach((a, i) => sheet.addRow({
+    sno: i + 1,
+    name: a.userId?.name || '',
+    email: a.userId?.email || '',
+    phone: a.userId?.phone || '',
+    selected: optionTextById[a.selectedOptionId] || a.selectedOptionId,
+    correct: optionTextById[quiz.quizContent?.correctOptionId] || quiz.quizContent?.correctOptionId,
+    isCorrect: a.isCorrect ? 'Yes' : 'No',
+    time: a.timeTakenSeconds,
+    attemptedAt: a.createdAt ? new Date(a.createdAt).toLocaleString() : '',
+  }));
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="quiz-attempts-${date}.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
 }
 
 
@@ -642,6 +752,8 @@ export async function createVideoContent(req, res) {
       }
     );
 
+    const initiallyActive = isUnlockTimePassed(videoDate, unlocksAt);
+
     const content = await Content.create({
       contentType: "video",
       unlocksAt,
@@ -656,10 +768,16 @@ export async function createVideoContent(req, res) {
         hasListenOnlyMode: hasListenOnlyMode === "true" || hasListenOnlyMode === true,
       },
       createdBy: adminId,
+      // Locked until unlocksAt (today's unlock cron flips it on) unless that
+      // time has already passed today, in which case publish it right away.
+      isActive: initiallyActive,
+      isNotified: initiallyActive
     });
 
-    // Send notification to all users about new video
-    await sendContentPublishedNotification(content, adminId);
+    // Send notification to all users about new video — only if it's actually visible now
+    if (initiallyActive) {
+      await sendContentPublishedNotification(content, adminId);
+    }
 
     return res.status(201).json(
       new ApiResponse(201, content, "Video content created and uploaded successfully!")
