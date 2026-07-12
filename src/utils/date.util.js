@@ -1,6 +1,6 @@
 import moment from 'moment-timezone';
 
-export const TIMEZONE = 'Asia/Karachi';
+export const TIMEZONE = 'Asia/Kolkata';
 
 // Change only the time here — everything else will automatically update
 export const CONTENT_UNLOCK_TIMES = {
@@ -10,7 +10,7 @@ export const CONTENT_UNLOCK_TIMES = {
 };
 
 // Whether the given content's scheduled unlock moment (its date + unlocksAt
-// time, in PKT) has already passed relative to now. Used at content-creation
+// time, in IST) has already passed relative to now. Used at content-creation
 // time to decide whether to publish it immediately (admin uploaded it after
 // its unlock window already passed today) or leave it locked for the unlock
 // cron to flip on at the scheduled time.
@@ -22,7 +22,7 @@ export function isUnlockTimePassed(dateValue, unlocksAt) {
 
 export function getPKTDateRange(date = null) {
   if (date) {
-    // String date "YYYY-MM-DD" se PKT range
+    // String date "YYYY-MM-DD" se IST range
     const day = moment.tz(date, 'YYYY-MM-DD', TIMEZONE);
     return {
       startOfDay: day.clone().startOf('day').toDate(),
@@ -30,7 +30,7 @@ export function getPKTDateRange(date = null) {
     };
   }
 
-  // Today's PKT date range
+  // Today's IST date range
   const now = moment().tz(TIMEZONE);
   return {
     startOfDay: now.clone().startOf('day').toDate(),

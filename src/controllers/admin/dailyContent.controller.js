@@ -13,7 +13,7 @@ import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 import fs from "fs";
 import { uploadOnS3 } from '../../utils/s3.js';
 import { sendContentPublishedNotification } from '../notification.controller.js';
-import { isUnlockTimePassed } from '../../utils/date.util.js';
+import { isUnlockTimePassed, TIMEZONE } from '../../utils/date.util.js';
 
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -61,10 +61,10 @@ export async function createTextContent(req, res) {
     throw new ApiError(400, 'Title, description, and label are required.');
   }
 
-  // Range create karein: Aaj ki subha 00:00 se raat 23:59 tak (Pakistan Time)
+  // Range create karein: Aaj ki subha 00:00 se raat 23:59 tak (India Time)
   const startOfDay = scheduledDate
-    ? moment.tz(scheduledDate, "Asia/Karachi").startOf('day').toDate()
-    : moment.tz("Asia/Karachi").startOf('day').toDate();
+    ? moment.tz(scheduledDate, TIMEZONE).startOf('day').toDate()
+    : moment.tz(TIMEZONE).startOf('day').toDate();
 
   const endOfDay = moment(startOfDay).endOf('day').toDate();
 
@@ -843,7 +843,7 @@ export async function updateVideoContent(req, res) {
   }
 
   // 2. Sirf aaj ki content update ho sakti hai
-  const now = moment().tz("Asia/Karachi");
+  const now = moment().tz(TIMEZONE);
   const startOfDay = now.clone().startOf('day').toDate();
   const endOfDay = now.clone().endOf('day').toDate();
 

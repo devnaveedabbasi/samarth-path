@@ -36,7 +36,7 @@ cron.schedule('* * * * *', async () => {
 
     if (!contentsToUnlock.length) return;
 
-    console.log(`[CRON] ${currentTime} PKT — unlocking ${contentsToUnlock.length} item(s)`);
+    console.log(`[CRON] ${currentTime} IST — unlocking ${contentsToUnlock.length} item(s)`);
 
     for (const contentDoc of contentsToUnlock) {
       try {
@@ -73,7 +73,7 @@ cron.schedule('* * * * *', async () => {
 
 /**
  * Cron: Weekly Winner Announcement
- * Har Sunday 12:00 AM (PKT) — previous week ke winners announce karta hai
+ * Har Sunday 12:00 AM (IST) — previous week ke winners announce karta hai
  */
 cron.schedule('0 0 * * 0', async () => {
   console.log('[CRON] Running Weekly Winner Announcement...');
@@ -91,7 +91,7 @@ cron.schedule('0 0 * * 0', async () => {
 
 /**
  * Cron: Old Notifications Cleanup
- * Har Sunday 2:00 AM (PKT) — 30 din purani notifications delete karta hai
+ * Har Sunday 2:00 AM (IST) — 30 din purani notifications delete karta hai
  */
 cron.schedule('0 2 * * 0', async () => {
   console.log('[CRON] Running Notifications Cleanup...');
