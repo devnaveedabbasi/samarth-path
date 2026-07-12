@@ -5,7 +5,7 @@ import WinnerService from '../services/winner.service.js';
 import NotificationService from '../services/notification.service.js';
 import Subscription from '../models/Subscription.model.js';
 import User from '../models/User.model.js';
-import { TIMEZONE, CONTENT_UNLOCK_TIMES } from '../utils/date.util.js';
+import { TIMEZONE } from '../utils/date.util.js';
 
 let isProcessing = false;
 
@@ -23,26 +23,25 @@ cron.schedule('* * * * *', async () => {
     const startOfDay = now.clone().startOf('day').toDate();
     const endOfDay = now.clone().endOf('day').toDate();
 
-    // Sirf woh content types jinka unlock time abhi match karta hai
-    const typesToUnlock = Object.entries(CONTENT_UNLOCK_TIMES)
-      .filter(([_, time]) => time === currentTime)
-      .map(([type]) => type);
+    // Har content apne khud ke unlocksAt field ke against check hota hai —
+    // type-level default (CONTENT_UNLOCK_TIMES) sirf create-time ka fallback
+    // value hai, admin ke custom unlocksAt ko yahan bhi honor karna zaroori hai.
+    const contentsToUnlock = await Content.find({
+      date: { $gte: startOfDay, $lte: endOfDay },
+      unlocksAt: currentTime,
+      isActive: false,
+      isNotified: false,
+      isDeleted: { $ne: true }
+    });
 
-    if (!typesToUnlock.length) return;
+    if (!contentsToUnlock.length) return;
 
-    console.log(`[CRON] ${currentTime} PKT — unlocking: ${typesToUnlock.join(', ')}`);
+    console.log(`[CRON] ${currentTime} IST — unlocking ${contentsToUnlock.length} item(s)`);
 
-    for (const contentType of typesToUnlock) {
+    for (const contentDoc of contentsToUnlock) {
       try {
-        // isActive: false wala content dhundo aur unlock karo
         const content = await Content.findOneAndUpdate(
-          {
-            contentType,
-            date: { $gte: startOfDay, $lte: endOfDay },
-            isActive: false,
-            isNotified: false,
-            isDeleted: { $ne: true }
-          },
+          { _id: contentDoc._id, isActive: false, isNotified: false },
           { $set: { isActive: true, isNotified: true } },
           { new: true }
         );
@@ -54,12 +53,12 @@ cron.schedule('* * * * *', async () => {
             content.videoContent?.title ||
             'Untitled';
 
-          console.log(`[CRON]  Unlocked ${contentType}: "${title}"`);
+          console.log(`[CRON]  Unlocked ${content.contentType}: "${title}"`);
 
           await NotificationService.sendContentPublishedNotification(content, content.createdBy);
         }
       } catch (error) {
-        console.error(`[CRON]  Failed to unlock ${contentType}:`, error.message);
+        console.error(`[CRON]  Failed to unlock ${contentDoc.contentType} (${contentDoc._id}):`, error.message);
       }
     }
   } catch (error) {
@@ -74,7 +73,7 @@ cron.schedule('* * * * *', async () => {
 
 /**
  * Cron: Weekly Winner Announcement
- * Har Sunday 12:00 AM (PKT) — previous week ke winners announce karta hai
+ * Har Sunday 12:00 AM (IST) — previous week ke winners announce karta hai
  */
 cron.schedule('0 0 * * 0', async () => {
   console.log('[CRON] Running Weekly Winner Announcement...');
@@ -92,7 +91,7 @@ cron.schedule('0 0 * * 0', async () => {
 
 /**
  * Cron: Old Notifications Cleanup
- * Har Sunday 2:00 AM (PKT) — 30 din purani notifications delete karta hai
+ * Har Sunday 2:00 AM (IST) — 30 din purani notifications delete karta hai
  */
 cron.schedule('0 2 * * 0', async () => {
   console.log('[CRON] Running Notifications Cleanup...');

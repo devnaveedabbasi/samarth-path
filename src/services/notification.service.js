@@ -115,7 +115,7 @@ export class NotificationService {
 
       const body = isAlreadyUnlocked
         ? `"${contentTitle}" is now available — watch it now!`
-        : `"${contentTitle}" will be published today at ${unlocksAt} PKT.`;
+        : `"${contentTitle}" will be published today at ${unlocksAt} IST.`;
 
       // Get all approved users
       const users = await User.find({

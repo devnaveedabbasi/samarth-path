@@ -21,6 +21,8 @@ router.delete('/text/:contentId', asyncHandler(adminDailyContentController.delet
 // QUIZ ROUTES
 router.post('/quiz', asyncHandler(adminDailyContentController.createQuizContent));
 router.get('/quiz', asyncHandler(adminDailyContentController.getQuizzes));
+router.get('/quiz/attempts', asyncHandler(adminDailyContentController.getQuizAttemptsByDate));
+router.get('/quiz/attempts/export', asyncHandler(adminDailyContentController.exportQuizAttemptsExcel));
 router.get('/quiz/:contentId', asyncHandler(adminDailyContentController.getQuizById));
 router.put('/quiz/:contentId', asyncHandler(adminDailyContentController.updateQuizContent));
 router.delete('/quiz/:contentId', asyncHandler(adminDailyContentController.deleteQuizContent));

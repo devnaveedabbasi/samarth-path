@@ -5,11 +5,22 @@ import Content from '../../models/Content.model.js';
 import Prize from '../../models/Prize.model.js';
 import mongoose from 'mongoose';
 import NotificationService from '../../services/notification.service.js';
+import ExcelJS from 'exceljs';
+
+// Shared day-range helper for the export endpoints below (mirrors the
+// startOfDay/endOfDay computation already inlined in getQuizAttempters etc.)
+function getDayRange(dateStr) {
+    const today = dateStr ? new Date(dateStr) : new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    return { startOfDay, endOfDay };
+}
 
 
 export const getQuizAttempters = async (req, res) => {
     try {
-        const today = new Date();
+        const { date } = req.query;
+        const today = date ? new Date(date) : new Date();
         const startOfDay = new Date(
             today.getFullYear(),
             today.getMonth(),
@@ -173,6 +184,109 @@ export const getQuizAttempters = async (req, res) => {
     }
 };
 
+// ── Export: Daily Leaderboard as Excel ─────────────────────────────────────
+export const exportDailyLeaderboardExcel = async (req, res) => {
+    try {
+        const { date } = req.query;
+        const { startOfDay, endOfDay } = getDayRange(date);
+
+        const leaderboard = await QuizAttempt.aggregate([
+            { $match: { createdAt: { $gte: startOfDay, $lt: endOfDay } } },
+            {
+                $group: {
+                    _id: '$userId',
+                    totalQuestions: { $sum: 1 },
+                    correctAnswers: { $sum: { $cond: ['$isCorrect', 1, 0] } },
+                    totalTime: { $sum: '$timeTakenSeconds' },
+                    firstAttemptAt: { $min: '$createdAt' }
+                }
+            },
+            { $match: { correctAnswers: { $gt: 0 } } },
+            { $addFields: { accuracy: { $multiply: [{ $divide: ['$correctAnswers', '$totalQuestions'] }, 100] } } },
+            { $sort: { correctAnswers: -1, accuracy: -1, totalTime: 1, firstAttemptAt: 1 } },
+            { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
+            { $unwind: '$user' }
+        ]);
+
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Leaderboard');
+        sheet.columns = [
+            { header: 'Rank', key: 'rank', width: 8 },
+            { header: 'Name', key: 'name', width: 25 },
+            { header: 'Email', key: 'email', width: 30 },
+            { header: 'Total Questions', key: 'totalQuestions', width: 16 },
+            { header: 'Correct Answers', key: 'correctAnswers', width: 16 },
+            { header: 'Accuracy (%)', key: 'accuracy', width: 14 },
+            { header: 'Total Time (s)', key: 'totalTime', width: 14 },
+            { header: 'First Attempt At', key: 'firstAttemptAt', width: 22 },
+        ];
+        sheet.getRow(1).font = { bold: true };
+
+        leaderboard.forEach((item, index) => sheet.addRow({
+            rank: index + 1,
+            name: item.user.name,
+            email: item.user.email,
+            totalQuestions: item.totalQuestions,
+            correctAnswers: item.correctAnswers,
+            accuracy: item.accuracy ? Number(item.accuracy.toFixed(2)) : 0,
+            totalTime: item.totalTime,
+            firstAttemptAt: item.firstAttemptAt ? new Date(item.firstAttemptAt).toLocaleString() : '',
+        }));
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="leaderboard-${date || 'today'}.xlsx"`);
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (error) {
+        console.error('Error exporting leaderboard:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+// ── Export: Daily Correct Attempts as Excel ────────────────────────────────
+export const exportDailyCorrectAttemptsExcel = async (req, res) => {
+    try {
+        const { date } = req.query;
+        const { startOfDay, endOfDay } = getDayRange(date);
+
+        const correctAttempts = await QuizAttempt.find({
+            isCorrect: true,
+            createdAt: { $gte: startOfDay, $lt: endOfDay }
+        })
+            .populate('userId', 'name email')
+            .sort({ createdAt: 1 });
+
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Correct Attempts');
+        sheet.columns = [
+            { header: '#', key: 'sno', width: 5 },
+            { header: 'Name', key: 'name', width: 25 },
+            { header: 'Email', key: 'email', width: 30 },
+            { header: 'Selected Option', key: 'selectedOption', width: 20 },
+            { header: 'Time Taken (s)', key: 'timeTaken', width: 14 },
+            { header: 'Attempted At', key: 'attemptedAt', width: 22 },
+        ];
+        sheet.getRow(1).font = { bold: true };
+
+        correctAttempts.forEach((a, i) => sheet.addRow({
+            sno: i + 1,
+            name: a.userId?.name || '',
+            email: a.userId?.email || '',
+            selectedOption: a.selectedOptionId,
+            timeTaken: a.timeTakenSeconds,
+            attemptedAt: a.createdAt ? new Date(a.createdAt).toLocaleString() : '',
+        }));
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="correct-attempts-${date || 'today'}.xlsx"`);
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (error) {
+        console.error('Error exporting correct attempts:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
 export const selectDailyWinners = async (req, res) => {
     try {
         const { userId } = req.params;
@@ -185,7 +299,8 @@ export const selectDailyWinners = async (req, res) => {
             });
         }
 
-        const today = new Date();
+        const { date } = req.body;
+        const today = date ? new Date(date) : new Date();
         const startOfDay = new Date(
             today.getFullYear(),
             today.getMonth(),
@@ -282,7 +397,7 @@ export const selectDailyWinners = async (req, res) => {
             rank: 1,
             score: stats.correctAnswers,
             cycleType: 'daily',
-            winnerDate: new Date(),
+            winnerDate: today,
             year: today.getFullYear(),
             weekNumber: getWeekNumber(today)
         });
@@ -364,10 +479,11 @@ export const selectDailyWinners = async (req, res) => {
 
 export const getDailyWinners = async (req, res) => {
     try {
-        const start = new Date();
+        const { date } = req.query;
+        const start = date ? new Date(date) : new Date();
         start.setHours(0, 0, 0, 0);
 
-        const end = new Date();
+        const end = new Date(start);
         end.setHours(23, 59, 59, 999);
 
         const dailyWinner = await Winner.findOne({

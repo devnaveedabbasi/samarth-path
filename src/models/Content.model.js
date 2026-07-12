@@ -65,7 +65,7 @@ const contentSchema = new mongoose.Schema({
     required: true
   },
 
-  isActive: { type: Boolean, default: true },
+  isActive: { type: Boolean, default: false },
   isDeleted: { type: Boolean, default: false },
   likesCount: { type: Number, default: 0 },
   commentsCount: { type: Number, default: 0 },

@@ -20,10 +20,14 @@ export async function AllUsers(req, res) {
   const skip   = (page - 1) * limit;
   const search = (req.query.search || "").trim();
   const status = (req.query.status || "").trim();
+  const isSubscribedRaw = req.query.isSubscribed;
 
   // Build filter
   const filter = { role: "user" };
   if (status) filter.status = status;
+  if (isSubscribedRaw === "true" || isSubscribedRaw === "false") {
+    filter.isSubscribed = isSubscribedRaw === "true";
+  }
   if (search) {
     filter.$or = [
       { name:  { $regex: search, $options: "i" } },

@@ -10,6 +10,8 @@ router.use(requireRole('admin'));
 
 router.post('/select/daily/:userId', asyncHandler(winnerController.selectDailyWinners));
 router.get('/attempters/daily', asyncHandler(winnerController.getQuizAttempters));
+router.get('/attempters/daily/export/leaderboard', asyncHandler(winnerController.exportDailyLeaderboardExcel));
+router.get('/attempters/daily/export/correct-attempts', asyncHandler(winnerController.exportDailyCorrectAttemptsExcel));
 router.get('/daily', asyncHandler(winnerController.getDailyWinners));
 
 router.post('/select/weekly/:userId', asyncHandler(winnerController.selectWeeklyWinner));
