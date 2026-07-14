@@ -366,12 +366,22 @@ export async function getQuizzes(req, res) {
   const query = { contentType: 'quiz', isDeleted: { $ne: true } };
   if (search) { query['quizContent.question'] = { $regex: search, $options: 'i' }; }
 
-  const quizzes = await Content.find(query).sort({ date: -1 }).limit(limit * 1).skip((page - 1) * limit);
+  let quizzes = await Content.find(query).sort({ date: -1 }).limit(limit * 1).skip((page - 1) * limit).lean();
   const total = await Content.countDocuments(query);
 
   if (!quizzes || quizzes.length === 0) {
     return res.status(200).json(new ApiResponse(200, [], 'No quizzes found in records.'));
   }
+
+  const quizIds = quizzes.map(q => q._id);
+  const prizes = await Prize.find({ quizId: { $in: quizIds }, isDeleted: { $ne: true } }).lean();
+  const prizeMap = {};
+  prizes.forEach(p => { prizeMap[p.quizId.toString()] = p; });
+
+  quizzes = quizzes.map(q => ({
+    ...q,
+    prize: prizeMap[q._id.toString()] || null
+  }));
 
   res.status(200).json(new ApiResponse(200, { quizzes, totalPages: Math.ceil(total / limit), currentPage: page, totalQuizzes: total }, 'Admin quizzes retrieved successfully.'));
 }
