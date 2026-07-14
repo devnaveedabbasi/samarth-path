@@ -69,7 +69,7 @@ export async function AllUsers(req, res) {
 
 // ── GET /users/stats ──────────────────────────────────────────────────────────
 export async function getUserStats(req, res) {
-  const [total, blocked, suspended, subscribed, pending, approved] =
+  const [total, blocked, suspended, subscribed, pending, approved, trial] =
     await Promise.all([
       User.countDocuments({ role: "user" }),
       User.countDocuments({ role: "user", status: "blocked" }),
@@ -77,6 +77,7 @@ export async function getUserStats(req, res) {
       User.countDocuments({ role: "user", isSubscribed: true }),
       User.countDocuments({ role: "user", status: "pending" }),
       User.countDocuments({ role: "user", status: "approved" }),
+      User.countDocuments({ role: "user", isTrial: true }),
     ]);
 
   res.status(200).json(
@@ -88,6 +89,7 @@ export async function getUserStats(req, res) {
           blockedUsers:    blocked,
           suspendedUsers:  suspended,
           subscribedUsers: subscribed,
+          trialUsers:      trial,
           pendingUsers:    pending,
           approvedUsers:   approved,
         },

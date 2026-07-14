@@ -29,12 +29,10 @@ const subscriptionPaymentSchema = new mongoose.Schema(
     },
     requestedPaymentMethod: {
       type: String,
-      enum: ['upi', 'card'],
       required: true,
     },
     actualPaymentMethod: {
       type: String,
-      enum: ['upi', 'card'],
       default: null,
     },
     razorpayOrderId: {

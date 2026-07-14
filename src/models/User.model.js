@@ -44,6 +44,7 @@ const userSchema = new mongoose.Schema({
 
   // Subscription reference
   isSubscribed: { type: Boolean, default: false },
+  isTrial: { type: Boolean, default: false },
   subscriptionID: { type: mongoose.Schema.Types.ObjectId, ref: 'Subscription' },
   notificationSettings: {
     text: { type: Boolean, default: true },

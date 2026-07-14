@@ -10,6 +10,9 @@ import crypto from 'crypto';
 const PLAN_NAME = 'Monthly Basic';
 const PLAN_PRICE = 199;
 const PLAN_AMOUNT_IN_PAISE = PLAN_PRICE * 100;
+const TRIAL_PLAN_NAME = '3-Day Trial';
+const TRIAL_PRICE = 5;
+const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 const TRIAL_DAYS = 3;
 const SUBSCRIPTION_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -46,7 +49,15 @@ const loadUserSubscription = async (userId) => {
 
 const syncUserSubscriptionState = async (user, subscription) => {
   user.subscriptionID = subscription._id;
-  user.isSubscribed = ['trial', 'active'].includes(subscription.status);
+  if (subscription.status === 'active') {
+    user.isSubscribed = true;
+    user.isTrial = false;
+  } else if (subscription.status === 'trial') {
+    user.isSubscribed = user.isTrial === true;
+  } else {
+    user.isSubscribed = false;
+    user.isTrial = false;
+  }
   await user.save();
 };
 
@@ -57,17 +68,9 @@ export async function createSubscriptionOrder(req, res) {
   try {
     const userId = req.user._id;
 
-    const paymentMethod = String(req.body.paymentMethod || '')
+    const paymentMethod = String(req.body.paymentMethod || 'upi')
       .trim()
       .toLowerCase();
-
-    // ✅ validate payment method
-    if (!['upi', 'card'].includes(paymentMethod)) {
-      throw new ApiError(
-        400,
-        'Valid payment method is required (upi or card).'
-      );
-    }
 
     // ✅ find user
     const user = await User.findById(userId);
@@ -96,12 +99,18 @@ export async function createSubscriptionOrder(req, res) {
       );
     }
 
-    // ✅ safety check
-    if (!PLAN_AMOUNT_IN_PAISE || PLAN_AMOUNT_IN_PAISE <= 0) {
+    // Determine if this is a trial payment (₹5) or full subscription (₹199)
+    const existingTrial = await Subscription.findOne({ userId, status: 'trial' });
+    const isTrialPayment = !!existingTrial && !user.isTrial;
+
+    const amount = isTrialPayment ? TRIAL_AMOUNT_IN_PAISE : PLAN_AMOUNT_IN_PAISE;
+    const planLabel = isTrialPayment ? TRIAL_PLAN_NAME : PLAN_NAME;
+    const planPrice = isTrialPayment ? TRIAL_PRICE : PLAN_PRICE;
+
+    if (!amount || amount <= 0) {
       throw new ApiError(500, 'Invalid plan configuration.');
     }
 
-    const amount = PLAN_AMOUNT_IN_PAISE;
     const currency = 'INR';
 
     const receipt = `rcpt_${Date.now().toString(36)}_${userId
@@ -115,8 +124,9 @@ export async function createSubscriptionOrder(req, res) {
       receipt,
       notes: {
         userId: userId.toString(),
-        plan: PLAN_NAME,
+        plan: planLabel,
         paymentMethod,
+        isTrialPayment: String(isTrialPayment),
       },
     };
 
@@ -135,8 +145,8 @@ export async function createSubscriptionOrder(req, res) {
       );
     }
 
-    subscription.planName = PLAN_NAME;
-    subscription.price = PLAN_PRICE;
+    subscription.planName = planLabel;
+    subscription.price = planPrice;
     subscription.paymentMethod = paymentMethod;
 
     subscription.razorpayOrderId = order.id;
@@ -165,8 +175,9 @@ export async function createSubscriptionOrder(req, res) {
           currency: order.currency,
           receipt: order.receipt,
           paymentMethod,
-          planName: PLAN_NAME,
-          planPrice: PLAN_PRICE,
+          planName: planLabel,
+          planPrice: planPrice,
+          isTrialPayment,
           key: process.env.RAZORPAY_KEY_ID,
         },
         'Subscription order created successfully.'
@@ -287,10 +298,11 @@ export async function verifyPayment(req, res) {
     );
   }
 
-  if (payment.amount !== PLAN_AMOUNT_IN_PAISE) {
+  const validAmounts = [TRIAL_AMOUNT_IN_PAISE, PLAN_AMOUNT_IN_PAISE];
+  if (!validAmounts.includes(payment.amount)) {
     throw new ApiError(
       400,
-      `Invalid payment amount. Expected ₹${PLAN_PRICE}, got ₹${payment.amount / 100}.`
+      `Invalid payment amount. Got ₹${payment.amount / 100}.`
     );
   }
 
@@ -307,13 +319,27 @@ export async function verifyPayment(req, res) {
 
   // All checks passed — activate subscription
   const now = new Date();
-  const { startDate, expiryDate } = createPaidWindow(now);
+  const isTrialPayment = payment.amount === TRIAL_AMOUNT_IN_PAISE;
 
-  subscription.planName = PLAN_NAME;
-  subscription.price = PLAN_PRICE;
-  subscription.status = 'active';
-  subscription.startDate = startDate;
-  subscription.expiryDate = expiryDate;
+  if (isTrialPayment) {
+    // ₹5 trial payment — keep status 'trial', set trialEndDate
+    const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
+    subscription.planName = TRIAL_PLAN_NAME;
+    subscription.price = TRIAL_PRICE;
+    subscription.status = 'trial';
+    subscription.startDate = now;
+    subscription.trialEndDate = trialEndDate;
+    user.isTrial = true;
+  } else {
+    // ₹199 full subscription
+    const { startDate, expiryDate } = createPaidWindow(now);
+    subscription.planName = PLAN_NAME;
+    subscription.price = PLAN_PRICE;
+    subscription.status = 'active';
+    subscription.startDate = startDate;
+    subscription.expiryDate = expiryDate;
+    user.isTrial = false;
+  }
   subscription.paymentMethod = payment.method || subscription.paymentMethod;
   subscription.paymentRef = razorpay_payment_id;
   subscription.razorpayOrderId = razorpay_order_id;
@@ -442,6 +468,7 @@ export async function getSubscriptionStatus(req, res) {
     await subscription.save();
 
     user.isSubscribed = false;
+    user.isTrial = false;
     await user.save();
   }
 

@@ -33,7 +33,6 @@ const subscriptionSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['upi', 'card']
   },
   razorpayOrderId: {
     type: String,

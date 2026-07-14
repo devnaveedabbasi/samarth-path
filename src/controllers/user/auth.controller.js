@@ -275,12 +275,18 @@ export async function login(req, res) {
     await user.save();
   }
 
-  // Sync user state for active subscriptions
-  if (['trial', 'active'].includes(subscription.status)) {
-    user.isSubscribed = true; // Both trial and active get app access
-    user.subscriptionID = subscription._id;
-    await user.save();
+  // Sync user subscription state
+  user.subscriptionID = subscription._id;
+  if (subscription.status === 'active') {
+    user.isSubscribed = true;
+    user.isTrial = false;
+  } else if (subscription.status === 'trial' && user.isTrial) {
+    // Only paid trial (₹5 paid) gets app access
+    user.isSubscribed = true;
+  } else {
+    user.isSubscribed = false;
   }
+  await user.save();
 
   // NOTE: We do NOT block login for expired users.
   // The app should check subscriptionStatus and redirect to subscription screen if expired.
@@ -580,6 +586,24 @@ export async function me(req, res) {
     throw new ApiError(404, 'User not found.');
   }
   const subscription = user.subscriptionID;
+  const now = new Date();
+
+  // Auto-expire trial
+  if (subscription?.status === 'trial' && subscription?.trialEndDate && subscription.trialEndDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    user.isTrial = false;
+    await user.save();
+  }
+
+  // Auto-expire active subscription
+  if (subscription?.status === 'active' && subscription?.expiryDate && subscription.expiryDate < now) {
+    subscription.status = 'expired';
+    await subscription.save();
+    user.isSubscribed = false;
+    await user.save();
+  }
 
   res.status(200).json(
     new ApiResponse(
@@ -596,6 +620,7 @@ export async function me(req, res) {
         dateOfBirth: user.dateOfBirth,
         address: user.address,
         isSubscribed: user.isSubscribed,
+        isTrial: user.isTrial,
         subscription: subscription ? {
           status: subscription.status,
           expiryDate: subscription.expiryDate,
