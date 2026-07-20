@@ -109,13 +109,25 @@ export class NotificationService {
         video: 'Video'
       }[contentType] || 'Content';
 
-      const title = isAlreadyUnlocked
-        ? `🔓 ${typeLabel} Now Available!`
-        : `📅 New ${typeLabel} Scheduled!`;
+      let title;
+      let body;
 
-      const body = isAlreadyUnlocked
-        ? `"${contentTitle}" is now available — watch it now!`
-        : `"${contentTitle}" will be published today at ${unlocksAt} IST.`;
+      if (isAlreadyUnlocked && contentType === 'video') {
+        title = 'Your evening dose of Path Guidance is here!';
+        body = `Watch "${contentTitle}" now!`;
+      } else if (isAlreadyUnlocked && contentType === 'quiz') {
+        title = 'Answer and Win this GRAND PRIZE!';
+        body = "Today's Quiz is now live.";
+      } else if (isAlreadyUnlocked && contentType === 'text') {
+        title = 'Find your Path this morning!';
+        body = 'Morning Text is now live.';
+      } else if (isAlreadyUnlocked) {
+        title = `🔓 ${typeLabel} Now Available!`;
+        body = `"${contentTitle}" is now available — watch it now!`;
+      } else {
+        title = `📅 New ${typeLabel} Scheduled!`;
+        body = `"${contentTitle}" will be published today at ${unlocksAt} IST.`;
+      }
 
       // Get all approved users
       const users = await User.find({

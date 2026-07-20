@@ -30,11 +30,14 @@
 // confirm/reconcile the same event.
 
 import mongoose from 'mongoose';
+import moment from 'moment-timezone';
 import Subscription from '../../models/Subscription.model.js';
 import SubscriptionPayment from '../../models/SubscriptionPayment.model.js';
 import User from '../../models/User.model.js';
+import NotificationService from '../../services/notification.service.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
+import { TIMEZONE } from '../../utils/date.util.js';
 import crypto from 'crypto';
 import {
   getRazorpayInstance,
@@ -460,6 +463,10 @@ export async function handleSubscriptionCharged(payload) {
   const paymentEntity = payload?.payment?.entity;
   if (!subEntity?.id || !paymentEntity?.id) return;
 
+  // Populated only for a genuinely new charge (not a duplicate delivery),
+  // then used to notify the user after the transaction commits.
+  let newChargeNotice = null;
+
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
@@ -527,12 +534,46 @@ export async function handleSubscriptionCharged(payload) {
         console.log(
           `[WEBHOOK] subscription.charged — cycle #${subscription.billingCycleCount} (₹${PLAN_PRICE}) activated for user ${subscription.userId}`
         );
+
+        newChargeNotice = {
+          userId: subscription.userId,
+          subscriptionId: subscription._id,
+          expiryDate: subscription.expiryDate,
+          cycleCount: subscription.billingCycleCount,
+        };
       } else {
         console.log(`[WEBHOOK] subscription.charged — duplicate delivery for payment ${paymentEntity.id}, skipped`);
       }
     });
   } finally {
     await session.endSession();
+  }
+
+  // Sent after the transaction has committed, and only for a genuinely new
+  // charge — duplicate webhook deliveries for the same payment never re-notify.
+  if (newChargeNotice) {
+    try {
+      const expiryLabel = moment(newChargeNotice.expiryDate).tz(TIMEZONE).format('D MMM YYYY');
+      await NotificationService.createNotification(newChargeNotice.userId, {
+        type: 'subscription',
+        title: '✅ Auto-Payment Successful',
+        body: `₹${PLAN_PRICE} was auto-debited for your subscription. You're covered until ${expiryLabel}.`,
+        status: 'success',
+        data: {
+          subscriptionId: newChargeNotice.subscriptionId.toString(),
+          amount: PLAN_PRICE,
+          cycleCount: newChargeNotice.cycleCount,
+          expiryDate: newChargeNotice.expiryDate.toISOString(),
+        },
+        relatedEntityId: newChargeNotice.subscriptionId,
+        relatedEntityType: 'subscription',
+      });
+    } catch (notifyError) {
+      console.error(
+        `[WEBHOOK] Failed to send auto-payment notification for user ${newChargeNotice.userId}:`,
+        notifyError.message
+      );
+    }
   }
 }
 
