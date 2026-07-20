@@ -48,6 +48,16 @@ export function validateRazorpayConfig() {
   console.log(`   Key Secret Length: ${keySecret.length}`);
   console.log('');
 
+  if (!process.env.RAZORPAY_WEBHOOK_SECRET?.trim()) {
+    console.warn('⚠️  RAZORPAY_WEBHOOK_SECRET is not set — webhook signature verification is DISABLED.');
+    console.warn('   Set this from Razorpay Dashboard > Settings > Webhooks before relying on webhooks in production.');
+  }
+
+  if (!process.env.RAZORPAY_PLAN_ID?.trim()) {
+    console.warn('⚠️  RAZORPAY_PLAN_ID is not set — recurring subscription creation will fail.');
+    console.warn('   Run: node scripts/createRazorpaySubscriptionPlan.mjs, then set RAZORPAY_PLAN_ID.');
+  }
+
   return true;
 }
 

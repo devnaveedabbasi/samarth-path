@@ -2,22 +2,23 @@
 import Subscription from '../../models/Subscription.model.js';
 import SubscriptionPayment from '../../models/SubscriptionPayment.model.js';
 import User from '../../models/User.model.js';
+import WebhookEvent from '../../models/WebhookEvent.model.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
-const PLAN_NAME = 'Monthly Basic';
-const PLAN_PRICE = 199;
+export const PLAN_NAME = 'Monthly Basic';
+export const PLAN_PRICE = 199;
 const PLAN_AMOUNT_IN_PAISE = PLAN_PRICE * 100;
-const TRIAL_PLAN_NAME = '3-Day Trial';
-const TRIAL_PRICE = 5;
+export const TRIAL_PLAN_NAME = '3-Day Trial';
+export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
-const TRIAL_DAYS = 3;
+export const TRIAL_DAYS = 3;
 const SUBSCRIPTION_DAYS = 30;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 
-const getRazorpayInstance = () => {
+export const getRazorpayInstance = () => {
   const keyId = process.env.RAZORPAY_KEY_ID?.trim();
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
 
@@ -36,7 +37,7 @@ const getRazorpayInstance = () => {
   });
 };
 
-const createPaidWindow = (baseDate = new Date()) => {
+export const createPaidWindow = (baseDate = new Date()) => {
   const startDate = new Date(baseDate);
   const expiryDate = new Date(baseDate.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
 
@@ -47,7 +48,7 @@ const loadUserSubscription = async (userId) => {
   return Subscription.findOne({ userId });
 };
 
-const syncUserSubscriptionState = async (user, subscription) => {
+export const syncUserSubscriptionState = async (user, subscription, session) => {
   user.subscriptionID = subscription._id;
   if (subscription.status === 'active') {
     user.isSubscribed = true;
@@ -58,7 +59,7 @@ const syncUserSubscriptionState = async (user, subscription) => {
     user.isSubscribed = false;
     user.isTrial = false;
   }
-  await user.save();
+  await user.save(session ? { session } : undefined);
 };
 
 // ==============================
@@ -563,9 +564,12 @@ export async function razorpayWebhook(req, res) {
       return res.status(400).json({ status: 'error', message: 'Missing signature' });
     }
 
+    // Razorpay signs the raw request bytes, not the re-serialized parsed
+    // object — req.rawBody is captured by the verify() hook on express.json()
+    // in app.js. Falls back to JSON.stringify only if rawBody is unavailable.
     const expectedSignature = crypto
       .createHmac('sha256', webhookSecret)
-      .update(JSON.stringify(req.body))
+      .update(req.rawBody || JSON.stringify(req.body))
       .digest('hex');
 
     if (receivedSignature !== expectedSignature) {
@@ -574,10 +578,32 @@ export async function razorpayWebhook(req, res) {
     }
   }
 
-  const event = req.body.event;
-  const payload = req.body.payload;
+  const event = req.body?.event;
+  const payload = req.body?.payload;
+
+  if (!event || typeof event !== 'string' || !payload) {
+    console.error('[WEBHOOK] Malformed payload — missing event/payload');
+    return res.status(400).json({ status: 'error', message: 'Malformed payload' });
+  }
 
   console.log(`[WEBHOOK] Received event: ${event}`);
+
+  // Deduplicate retried webhook deliveries. Razorpay resends the identical
+  // payload bytes on retry, so a hash of the raw body reliably identifies the
+  // same delivery. The unique index makes this safe under concurrent
+  // duplicate deliveries — a duplicate insert simply fails and we short-circuit.
+  const bodyForHash = req.rawBody || Buffer.from(JSON.stringify(req.body));
+  const eventHash = crypto.createHash('sha256').update(bodyForHash).digest('hex');
+
+  try {
+    await WebhookEvent.create({ hash: eventHash, event });
+  } catch (dedupError) {
+    if (dedupError.code === 11000) {
+      console.log(`[WEBHOOK] Duplicate delivery for event ${event}, skipping reprocessing`);
+      return res.status(200).json({ status: 'ok', duplicate: true });
+    }
+    console.error('[WEBHOOK] Dedup check failed, proceeding without it:', dedupError.message);
+  }
 
   try {
     if (event === 'payment.captured') {
@@ -664,6 +690,41 @@ export async function razorpayWebhook(req, res) {
         );
 
         console.log(`[WEBHOOK] Payment failed for order: ${orderId}`);
+      }
+    }
+
+    if (event === 'payment.authorized') {
+      // Informational only: this integration relies on Razorpay's default
+      // auto-capture, so payment.captured (order flow) / subscription.charged
+      // (recurring flow) are what actually grant access. No state change here
+      // avoids treating an authorized-but-not-yet-captured payment as paid.
+      const payment = payload.payment?.entity;
+      console.log(`[WEBHOOK] payment.authorized — payment ${payment?.id} authorized, awaiting capture`);
+    }
+
+    // Razorpay Subscriptions API events (recurring auto-debit flow).
+    // Dynamic import avoids a static circular import with
+    // subscriptionRecurring.controller.js, which itself imports shared
+    // helpers/constants from this file.
+    if (event.startsWith('subscription.')) {
+      const recurring = await import('./subscriptionRecurring.controller.js');
+
+      if (event === 'subscription.authenticated') {
+        await recurring.handleSubscriptionAuthenticated(payload);
+      } else if (event === 'subscription.activated') {
+        await recurring.handleSubscriptionActivated(payload);
+      } else if (event === 'subscription.pending') {
+        await recurring.handleSubscriptionPending(payload);
+      } else if (event === 'subscription.charged') {
+        await recurring.handleSubscriptionCharged(payload);
+      } else if (event === 'subscription.halted') {
+        await recurring.handleSubscriptionHalted(payload);
+      } else if (event === 'subscription.cancelled') {
+        await recurring.handleSubscriptionCancelled(payload);
+      } else if (event === 'subscription.completed') {
+        await recurring.handleSubscriptionCompleted(payload);
+      } else if (event === 'subscription.updated') {
+        await recurring.handleSubscriptionUpdated(payload);
       }
     }
   } catch (error) {

@@ -55,7 +55,14 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
-app.use(express.json());
+// `verify` captures the raw request bytes onto req.rawBody, needed for
+// correct Razorpay webhook HMAC verification (Razorpay signs the raw body,
+// not the re-serialized parsed object). Parsed req.body behavior is unchanged.
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(requestLogger);

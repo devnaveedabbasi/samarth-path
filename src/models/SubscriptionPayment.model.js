@@ -13,6 +13,12 @@ const subscriptionPaymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Subscription',
     },
+    // Set only for charges billed via the Razorpay Subscriptions API (auto-debit)
+    razorpaySubscriptionId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
     planName: {
       type: String,
       required: true,

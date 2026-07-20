@@ -94,6 +94,39 @@ const subscriptionSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Razorpay Subscriptions API (true auto-debit / UPI AutoPay flow)
+  razorpayCustomerId: {
+    type: String,
+    sparse: true
+  },
+  razorpaySubscriptionId: {
+    type: String,
+    index: true,
+    sparse: true
+  },
+  razorpayPlanId: {
+    type: String
+  },
+  razorpaySubscriptionStatus: {
+    type: String,
+    enum: [
+      'created', 'authenticated', 'active', 'pending',
+      'halted', 'cancelled', 'completed', 'expired', null
+    ],
+    default: null
+  },
+  nextBillingDate: {
+    type: Date,
+    default: null
+  },
+  billingCycleCount: {
+    type: Number,
+    default: 0
+  },
+  cancelledAt: {
+    type: Date,
+    default: null
+  },
   paymentHistory: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'SubscriptionPayment'

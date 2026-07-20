@@ -288,4 +288,11 @@ cron.schedule('0 * * * *', async () => {
   timezone: TIMEZONE
 });
 
+// NOTE: Recurring subscription status sync (₹5 authorization, ₹199 auto-charges,
+// halted/cancelled/completed transitions) is handled entirely by the Razorpay
+// webhook — see razorpayWebhook in controllers/user/subscription.controller.js,
+// routed at POST /api/user/subscription/webhook. No cron/polling is used for
+// Razorpay status synchronization; a previous polling-based cron job was
+// removed in favor of webhooks now that a public HTTPS endpoint is available.
+
 console.log('[CRON]  All scheduled jobs initialized');
