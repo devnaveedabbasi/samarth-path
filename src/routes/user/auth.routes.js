@@ -20,6 +20,8 @@ router.post('/notification-settings', authenticateToken, asyncHandler(userAuth.u
 router.get('/notification-settings', authenticateToken, asyncHandler(userAuth.getNotificationSettings));
 
 router.put('/update-profile', authenticateToken, requireRole('user'), upload.single('profilePicture'), asyncHandler(userAuth.updateProfile));
+router.post('/verify-email-update', authenticateToken, requireRole('user'), asyncHandler(userAuth.verifyEmailUpdate));
+router.post('/verify-phone-update', authenticateToken, requireRole('user'), asyncHandler(userAuth.verifyPhoneUpdate));
 router.get('/me', authenticateToken, requireRole('user'), asyncHandler(userAuth.me));
 
 export default router;

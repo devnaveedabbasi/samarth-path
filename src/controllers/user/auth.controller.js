@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import User from '../../models/User.model.js';
 import Subscription from '../../models/Subscription.model.js';
 import { sendOtpSms } from '../../utils/smsService.js';
+import { sendOtpEmail } from '../../utils/emailService.js';
 import { signToken } from '../../utils/jwt.js';
 import { generateNumericOtp } from '../../utils/otp.js';
 import { ApiError } from '../../utils/errorHandler.js';
@@ -24,6 +25,8 @@ function publicUserDoc(user) {
   delete u.phoneOTP;
   delete u.emailOTP;
   delete u.resetOTP;
+  delete u.tempEmailOTP;
+  delete u.tempPhoneOTP;
   return u;
 }
 
@@ -475,7 +478,7 @@ export async function changePassword(req, res) {
 
 export async function updateProfile(req, res) {
   const userId = req.user._id;
-  const { name, gender, dateOfBirth, address } = req.body
+  const { name, gender, dateOfBirth, address, email, phone } = req.body
 
   const user = await User.findById(userId);
 
@@ -559,6 +562,46 @@ export async function updateProfile(req, res) {
     }
   }
 
+  if (typeof email === 'string' && email.trim().toLowerCase() !== (user.email || '').toLowerCase()) {
+    const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      throw new ApiError(400, 'Invalid email format.');
+    }
+    const existingEmail = await User.findOne({ email: cleanEmail, _id: { $ne: userId } });
+    if (existingEmail) {
+      throw new ApiError(400, 'Email is already registered by another user.');
+    }
+    const otp = generateNumericOtp(6);
+    user.tempEmail = cleanEmail;
+    user.tempEmailOTP = otp;
+    user.tempEmailOtpExpiry = new Date(Date.now() + OTP_TTL_MS);
+    user.tempEmailOtpAttempts = 0;
+    
+    await sendOtpEmail(cleanEmail, otp);
+    updatedFields.emailVerificationPending = true;
+  }
+
+  if (phone) {
+    const cleanPhone = String(phone).trim();
+    if (cleanPhone !== user.phone) {
+      if (!isValidIndianPhone(cleanPhone)) {
+        throw new ApiError(400, 'Invalid phone number format. Must be a valid Indian mobile number.');
+      }
+      const existingPhone = await User.findOne({ phone: cleanPhone, _id: { $ne: userId } });
+      if (existingPhone) {
+        throw new ApiError(400, 'Phone number is already registered by another user.');
+      }
+      const otp = generateNumericOtp(6);
+      user.tempPhone = cleanPhone;
+      user.tempPhoneOTP = otp;
+      user.tempPhoneOtpExpiry = new Date(Date.now() + OTP_TTL_MS);
+      user.tempPhoneOtpAttempts = 0;
+
+      await sendOtpSms(cleanPhone, otp);
+      updatedFields.phoneVerificationPending = true;
+    }
+  }
 
   if (Object.keys(updatedFields).length === 0) {
     throw new ApiError(400, 'No fields were updated.');
@@ -567,7 +610,113 @@ export async function updateProfile(req, res) {
   await user.save();
 
   res.status(200).json(
-    new ApiResponse(200, updatedFields, 'Profile updated successfully.')
+    new ApiResponse(200, updatedFields, 'Profile update initiated.')
+  );
+}
+
+export async function verifyEmailUpdate(req, res) {
+  const userId = req.user._id;
+  const otp = String(req.body.otp || '').trim();
+
+  if (!otp) {
+    throw new ApiError(400, 'OTP is required.');
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new ApiError(404, 'User not found.');
+  }
+
+  if (!user.tempEmail) {
+    throw new ApiError(400, 'No email update request found.');
+  }
+
+  if (user.tempEmailOtpAttempts >= MAX_OTP_ATTEMPTS) {
+    throw new ApiError(429, 'Too many failed attempts. Please update profile again to request a new OTP.');
+  }
+
+  if (!user.tempEmailOTP || !user.tempEmailOtpExpiry || user.tempEmailOtpExpiry < new Date()) {
+    user.tempEmailOtpAttempts += 1;
+    await user.save();
+    throw new ApiError(410, 'OTP expired or invalid. Please update profile again.');
+  }
+
+  if (user.tempEmailOTP !== otp) {
+    user.tempEmailOtpAttempts += 1;
+    await user.save();
+    throw new ApiError(401, 'Invalid OTP.');
+  }
+
+  const existingEmail = await User.findOne({ email: user.tempEmail, _id: { $ne: userId } });
+  if (existingEmail) {
+    throw new ApiError(400, 'Email already registered by another user.');
+  }
+
+  user.email = user.tempEmail;
+  user.isEmailVerified = true;
+
+  user.tempEmail = undefined;
+  user.tempEmailOTP = undefined;
+  user.tempEmailOtpExpiry = undefined;
+  user.tempEmailOtpAttempts = 0;
+
+  await user.save();
+
+  res.status(200).json(
+    new ApiResponse(200, { email: user.email }, 'Email updated successfully.')
+  );
+}
+
+export async function verifyPhoneUpdate(req, res) {
+  const userId = req.user._id;
+  const otp = String(req.body.otp || '').trim();
+
+  if (!otp) {
+    throw new ApiError(400, 'OTP is required.');
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new ApiError(404, 'User not found.');
+  }
+
+  if (!user.tempPhone) {
+    throw new ApiError(400, 'No phone update request found.');
+  }
+
+  if (user.tempPhoneOtpAttempts >= MAX_OTP_ATTEMPTS) {
+    throw new ApiError(429, 'Too many failed attempts. Please update profile again to request a new OTP.');
+  }
+
+  if (!user.tempPhoneOTP || !user.tempPhoneOtpExpiry || user.tempPhoneOtpExpiry < new Date()) {
+    user.tempPhoneOtpAttempts += 1;
+    await user.save();
+    throw new ApiError(410, 'OTP expired or invalid. Please update profile again.');
+  }
+
+  if (user.tempPhoneOTP !== otp) {
+    user.tempPhoneOtpAttempts += 1;
+    await user.save();
+    throw new ApiError(401, 'Invalid OTP.');
+  }
+
+  const existingPhone = await User.findOne({ phone: user.tempPhone, _id: { $ne: userId } });
+  if (existingPhone) {
+    throw new ApiError(400, 'Phone number already registered by another user.');
+  }
+
+  user.phone = user.tempPhone;
+  user.isPhoneVerified = true;
+
+  user.tempPhone = undefined;
+  user.tempPhoneOTP = undefined;
+  user.tempPhoneOtpExpiry = undefined;
+  user.tempPhoneOtpAttempts = 0;
+
+  await user.save();
+
+  res.status(200).json(
+    new ApiResponse(200, { phone: user.phone }, 'Phone number updated successfully.')
   );
 }
 

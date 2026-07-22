@@ -39,7 +39,7 @@ const corsOptions = {
     // Allow all Vercel preview deployments too
     if (
       allowedOrigins.includes(origin) ||
-      origin.endsWith(".vercel.app")       
+      origin.endsWith(".vercel.app")
     ) {
       return callback(null, true);
     }
@@ -49,7 +49,7 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  credentials: true,
+  credentials: false,
 };
 
 app.use(cors(corsOptions));

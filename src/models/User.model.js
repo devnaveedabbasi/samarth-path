@@ -27,6 +27,16 @@ const userSchema = new mongoose.Schema({
   otpExpiry: { type: Date },
   otpAttempts: { type: Number, default: 0 },
 
+  tempEmail: { type: String },
+  tempEmailOTP: { type: String },
+  tempEmailOtpExpiry: { type: Date },
+  tempEmailOtpAttempts: { type: Number, default: 0 },
+
+  tempPhone: { type: String },
+  tempPhoneOTP: { type: String },
+  tempPhoneOtpExpiry: { type: Date },
+  tempPhoneOtpAttempts: { type: Number, default: 0 },
+
   resetOTP: String,
   resetOtpExpiry: Date,
   resetOtpAttempts: { type: Number, default: 0 },
