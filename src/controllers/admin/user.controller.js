@@ -5,9 +5,10 @@ import NotificationService from "../../services/notification.service.js";
 import { ApiResponse } from "../../utils/apiResponse.js";
 import { ApiError } from "../../utils/errorHandler.js";
 import { isValidIndianPhone } from "../user/auth.controller.js";
+import { uploadOnS3 } from '../../utils/s3.js';
 
 const SALT_ROUNDS = 10;
-const TRIAL_DAYS = 3;
+const TRIAL_DAYS = 5 / (24 * 60); // 5 MINUTES FOR TESTING (was 3 days)
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PLAN_NAME = "Monthly Basic";
 const DEFAULT_PLAN_PRICE = 199;

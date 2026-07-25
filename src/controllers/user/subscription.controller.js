@@ -14,7 +14,7 @@ const PLAN_AMOUNT_IN_PAISE = PLAN_PRICE * 100;
 export const TRIAL_PLAN_NAME = '3-Day Trial';
 export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
-export const TRIAL_DAYS = 3;
+export const TRIAL_DAYS = 5 / (24 * 60); // 5 MINUTES FOR TESTING (was 3 days)
 const SUBSCRIPTION_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 

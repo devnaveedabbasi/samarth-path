@@ -108,12 +108,12 @@ cron.schedule('0 2 * * 0', async () => {
 });
 
 /**
- * Cron: Trial Expiry Check (every 10 minutes)
+ * Cron: Trial Expiry Check (every minute for testing)
  * - Marks expired trial subscriptions as 'expired'
  * - Updates user.isSubscribed = false
  * - Sends push notification when trial expires
  */
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
   console.log('[CRON] Running Trial Subscription Expiry Check...');
 
   try {
@@ -134,7 +134,8 @@ cron.schedule('*/10 * * * *', async () => {
       await sub.save();
 
       await User.findByIdAndUpdate(sub.userId, {
-        isSubscribed: false
+        isSubscribed: false,
+        isTrial: false        // Trial flag bhi clear karo
       });
 
       // Send expiry notification
@@ -164,15 +165,18 @@ cron.schedule('*/10 * * * *', async () => {
   } catch (error) {
     console.error('[CRON ERROR] Trial subscription expiry:', error.message);
   }
+}, {
+  scheduled: true,
+  timezone: TIMEZONE
 });
 
 /**
- * Cron: Paid Subscription Expiry Check (every 10 minutes)
+ * Cron: Paid Subscription Expiry Check (every minute for testing)
  * - Marks expired active (paid) subscriptions as 'expired'
  * - Updates user.isSubscribed = false
  * - Sends renewal notification
  */
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
   console.log('[CRON] Running Paid Subscription Expiry Check...');
 
   try {
@@ -223,6 +227,9 @@ cron.schedule('*/10 * * * *', async () => {
   } catch (error) {
     console.error('[CRON ERROR] Paid subscription expiry:', error.message);
   }
+}, {
+  scheduled: true,
+  timezone: TIMEZONE
 });
 
 /**

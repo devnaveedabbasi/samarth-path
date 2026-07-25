@@ -55,7 +55,7 @@ const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 // Razorpay requires a finite total_count; this is ~98 years of 30-day cycles,
 // i.e. effectively "until cancelled" for any real-world subscriber.
 const TOTAL_BILLING_CYCLES = 1200;
-const IN_FLIGHT_RAZORPAY_STATUSES = ['created', 'authenticated', 'active', 'pending'];
+const IN_FLIGHT_RAZORPAY_STATUSES = ['authenticated', 'active', 'pending'];
 const TERMINAL_RAZORPAY_STATUSES = ['cancelled', 'completed', 'expired'];
 
 // ==============================
@@ -226,8 +226,11 @@ export async function verifyRecurringSubscription(req, res) {
     throw new ApiError(404, 'Recurring subscription not found for this payment.');
   }
 
-  // Idempotency — if the trial is already active for this subscription, no need to re-verify.
-  if (subscription.status === 'trial' || subscription.status === 'active') {
+  // Idempotency — if this specific recurring subscription is already authenticated/active, no need to re-verify.
+  if (
+    subscription.razorpaySubscriptionStatus === 'authenticated' ||
+    subscription.razorpaySubscriptionStatus === 'active'
+  ) {
     return res.status(200).json(
       new ApiResponse(
         200,
