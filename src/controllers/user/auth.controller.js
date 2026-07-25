@@ -104,23 +104,19 @@ export async function register(req, res) {
     lastOTPSent: new Date(),
   });
 
-  // Create trial subscription
+  // Create a pending subscription (requires ₹5 payment to activate trial)
   const now = new Date();
-  const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
   const subscription = await Subscription.create({
     userId: user._id,
-    planName: 'Trial',
-    price: 0,
-    status: 'trial',
+    planName: 'Monthly Basic',
+    price: 199,
+    status: 'pending',
     startDate: now,
-    expiryDate: trialEndDate,
-    trialStartDate: now,
-    trialEndDate,
   });
 
   user.subscriptionID = subscription._id;
-  user.isSubscribed = true;   // Trial ke dauran user subscribed hota hai
-  user.isTrial = true;        // Trial flag set karo
+  user.isSubscribed = false;   // User is NOT subscribed until they pay ₹5
+  user.isTrial = false;        // User is NOT on trial yet
   await user.save();
 
 

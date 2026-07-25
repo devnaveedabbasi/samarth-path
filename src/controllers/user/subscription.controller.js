@@ -101,8 +101,17 @@ export async function createSubscriptionOrder(req, res) {
     }
 
     // Determine if this is a trial payment (₹5) or full subscription (₹199)
-    const existingTrial = await Subscription.findOne({ userId, status: 'trial' });
-    const isTrialPayment = !!existingTrial && !user.isTrial;
+    let subscription = await loadUserSubscription(userId);
+
+    if (!subscription) {
+      throw new ApiError(
+        400,
+        'Subscription record not found. Please contact support.'
+      );
+    }
+
+    // Agar subscription 'pending' hai, iska matlab abhi tak user ne trial activate nahi kiya
+    const isTrialPayment = subscription.status === 'pending';
 
     const amount = isTrialPayment ? TRIAL_AMOUNT_IN_PAISE : PLAN_AMOUNT_IN_PAISE;
     const planLabel = isTrialPayment ? TRIAL_PLAN_NAME : PLAN_NAME;
@@ -136,15 +145,6 @@ export async function createSubscriptionOrder(req, res) {
 
     // ❌ IMPORTANT FIX:
     // Only update subscription — DO NOT create payment record here
-
-    let subscription = await loadUserSubscription(userId);
-
-    if (!subscription) {
-      throw new ApiError(
-        400,
-        'Subscription record not found. Please contact support.'
-      );
-    }
 
     subscription.planName = planLabel;
     subscription.price = planPrice;
