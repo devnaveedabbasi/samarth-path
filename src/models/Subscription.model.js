@@ -28,8 +28,7 @@ const subscriptionSchema = new mongoose.Schema({
     default: Date.now
   },
   expiryDate: {
-    type: Date,
-    required: true
+    type: Date
   },
   paymentMethod: {
     type: String,
