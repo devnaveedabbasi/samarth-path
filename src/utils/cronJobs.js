@@ -197,7 +197,8 @@ cron.schedule('* * * * *', async () => {
       await sub.save();
 
       await User.findByIdAndUpdate(sub.userId, {
-        isSubscribed: false
+        isSubscribed: false,
+        isTrial: false
       });
 
       // Send renewal notification
