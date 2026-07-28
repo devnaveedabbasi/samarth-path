@@ -16,9 +16,9 @@ const DEFAULT_DURATION_DAYS = 30;
 
 // ── GET /users  (with pagination, search, status filter) ──────────────────────
 export async function AllUsers(req, res) {
-  const page   = Math.max(1, parseInt(req.query.page)  || 1);
-  const limit  = Math.min(100, parseInt(req.query.limit) || 10);
-  const skip   = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(100, parseInt(req.query.limit) || 10);
+  const skip = (page - 1) * limit;
   const search = (req.query.search || "").trim();
   const status = (req.query.status || "").trim();
   const isSubscribedRaw = req.query.isSubscribed;
@@ -31,7 +31,7 @@ export async function AllUsers(req, res) {
   }
   if (search) {
     filter.$or = [
-      { name:  { $regex: search, $options: "i" } },
+      { name: { $regex: search, $options: "i" } },
       { email: { $regex: search, $options: "i" } },
       { phone: { $regex: search, $options: "i" } },
     ];
@@ -55,12 +55,12 @@ export async function AllUsers(req, res) {
       {
         users,
         pagination: {
-          currentPage:  page,
+          currentPage: page,
           totalPages,
-          totalItems:   total,
+          totalItems: total,
           itemsPerPage: limit,
-          hasNextPage:  page < totalPages,
-          hasPrevPage:  page > 1,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
         },
       },
       "Users retrieved successfully."
@@ -86,13 +86,13 @@ export async function getUserStats(req, res) {
       200,
       {
         cards: {
-          totalUsers:      total,
-          blockedUsers:    blocked,
-          suspendedUsers:  suspended,
+          totalUsers: total,
+          blockedUsers: blocked,
+          suspendedUsers: suspended,
           subscribedUsers: subscribed,
-          trialUsers:      trial,
-          pendingUsers:    pending,
-          approvedUsers:   approved,
+          trialUsers: trial,
+          pendingUsers: pending,
+          approvedUsers: approved,
         },
       },
       "Stats retrieved successfully."

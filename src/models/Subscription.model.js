@@ -38,12 +38,12 @@ const subscriptionSchema = new mongoose.Schema({
     index: true,
     sparse: true
   },
- 
-   razorpayPaymentId: {
-  type: String,
-  unique: true,
-  sparse: true,  // ← bas ye add karo
-},
+
+  razorpayPaymentId: {
+    type: String,
+    unique: true,
+    sparse: true,  // ← bas ye add karo
+  },
   razorpaySignature: {
     type: String
   },
@@ -83,7 +83,7 @@ const subscriptionSchema = new mongoose.Schema({
   },
   trialEndDate: {
     type: Date,
-    default: () => new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days
+    default: () => new Date(Date.now() + 5 * 60 * 1000) // 5 minutes  
   },
   trialNotificationSent: {
     type: Boolean,

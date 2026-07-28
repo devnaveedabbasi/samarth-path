@@ -103,15 +103,13 @@ export async function register(req, res) {
     otpAttempts: 0,
     lastOTPSent: new Date(),
   });
+  const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
 
   // Create a pending subscription (requires ₹5 payment to activate trial)
   const now = new Date();
   const subscription = await Subscription.create({
     userId: user._id,
-    planName: 'Monthly Basic',
-    price: 199,
     status: 'pending',
-    startDate: now,
   });
 
   user.subscriptionID = subscription._id;
@@ -574,7 +572,7 @@ export async function updateProfile(req, res) {
     user.tempEmailOTP = otp;
     user.tempEmailOtpExpiry = new Date(Date.now() + OTP_TTL_MS);
     user.tempEmailOtpAttempts = 0;
-    
+
     await sendOtpEmail(cleanEmail, otp);
     updatedFields.emailVerificationPending = true;
   }
