@@ -24,8 +24,7 @@ const subscriptionSchema = new mongoose.Schema({
     default: 'trial'
   },
   startDate: {
-    type: Date,
-    default: Date.now
+    type: Date
   },
   expiryDate: {
     type: Date
@@ -78,12 +77,10 @@ const subscriptionSchema = new mongoose.Schema({
     default: {}
   },
   trialStartDate: {
-    type: Date,
-    default: Date.now
+    type: Date
   },
   trialEndDate: {
-    type: Date,
-    default: () => new Date(Date.now() + 5 * 60 * 1000) // 5 minutes  
+    type: Date
   },
   trialNotificationSent: {
     type: Boolean,

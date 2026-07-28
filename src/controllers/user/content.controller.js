@@ -459,7 +459,7 @@ export async function getArchiveByDate(req, res) {
 
   const user = await User.findById(userId);
 
-  if (!user.isSubscribed) {
+  if (!user.isSubscribed && !user.isTrial) {
     return res.status(403).json(
       new ApiResponse(
         403,

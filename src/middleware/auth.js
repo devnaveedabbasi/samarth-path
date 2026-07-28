@@ -125,6 +125,7 @@ const checkSubscription = async (req, res, next) => {
       subscription.status = 'expired';
 
       user.isSubscribed = false;
+      user.isTrial = false;
 
       await subscription.save();
       await user.save();
@@ -150,6 +151,7 @@ const checkSubscription = async (req, res, next) => {
       subscription.status = 'expired';
 
       user.isSubscribed = false;
+      user.isTrial = false;
 
       await subscription.save();
       await user.save();
@@ -169,7 +171,8 @@ const checkSubscription = async (req, res, next) => {
 
     // Sync user state for active subscriptions
     if (['trial', 'active'].includes(subscription.status)) {
-      user.isSubscribed = true;
+      user.isSubscribed = (subscription.status === 'active');
+      user.isTrial = (subscription.status === 'trial');
       user.subscriptionID = subscription._id;
       await user.save();
     }
@@ -179,6 +182,10 @@ const checkSubscription = async (req, res, next) => {
       subscription.status !== 'trial' &&
       subscription.status !== 'active'
     ) {
+      user.isSubscribed = false;
+      user.isTrial = false;
+      await user.save();
+
       return res.status(403).json({
         success: false,
         message:

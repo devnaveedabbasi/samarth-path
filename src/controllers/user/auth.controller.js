@@ -260,6 +260,7 @@ export async function login(req, res) {
     subscription.status = 'expired';
     await subscription.save();
     user.isSubscribed = false;
+    user.isTrial = false;
     await user.save();
   }
 
@@ -268,6 +269,7 @@ export async function login(req, res) {
     subscription.status = 'expired';
     await subscription.save();
     user.isSubscribed = false;
+    user.isTrial = false;
     await user.save();
   }
 
@@ -276,11 +278,12 @@ export async function login(req, res) {
   if (subscription.status === 'active') {
     user.isSubscribed = true;
     user.isTrial = false;
-  } else if (subscription.status === 'trial' && user.isTrial) {
-    // Only paid trial (₹5 paid) gets app access
-    user.isSubscribed = true;
+  } else if (subscription.status === 'trial') {
+    user.isSubscribed = false;
+    user.isTrial = true;
   } else {
     user.isSubscribed = false;
+    user.isTrial = false;
   }
   await user.save();
 
@@ -744,6 +747,7 @@ export async function me(req, res) {
     subscription.status = 'expired';
     await subscription.save();
     user.isSubscribed = false;
+    user.isTrial = false;
     await user.save();
   }
 

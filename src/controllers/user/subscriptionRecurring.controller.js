@@ -412,11 +412,9 @@ export async function handleSubscriptionAuthenticated(payload) {
         subscription.status = 'trial';
         subscription.planName = TRIAL_PLAN_NAME;
         subscription.price = TRIAL_PRICE;
-        subscription.startDate = now;
         subscription.trialStartDate = now;
         subscription.trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
         subscription.trialNotificationSent = false;
-        subscription.paidAt = now;
       }
 
       subscription.paymentMethod = paymentEntity?.method || subscription.paymentMethod || 'upi_autopay';
@@ -424,16 +422,9 @@ export async function handleSubscriptionAuthenticated(payload) {
       subscription.nextBillingDate = subEntity.current_end
         ? new Date(subEntity.current_end * 1000)
         : subscription.nextBillingDate;
-      await subscription.save({ session });
-
-      const user = await User.findById(subscription.userId).session(session);
-      if (user) {
-        user.isTrial = true;
-        await syncUserSubscriptionState(user, subscription, session);
-      }
 
       if (paymentEntity?.id) {
-        await SubscriptionPayment.findOneAndUpdate(
+        const paymentRecord = await SubscriptionPayment.findOneAndUpdate(
           { razorpayPaymentId: paymentEntity.id },
           {
             $setOnInsert: {
@@ -457,6 +448,17 @@ export async function handleSubscriptionAuthenticated(payload) {
           },
           { upsert: true, new: true, session }
         );
+
+        if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
+          subscription.paymentHistory.push(paymentRecord._id);
+        }
+      }
+
+      await subscription.save({ session });
+
+      const user = await User.findById(subscription.userId).session(session);
+      if (user) {
+        await syncUserSubscriptionState(user, subscription, session);
       }
 
       console.log(`[WEBHOOK] subscription.authenticated — trial activated for user ${subscription.userId}`);
@@ -506,9 +508,8 @@ export async function handleSubscriptionCharged(payload) {
       subscription.nextBillingDate = subEntity.current_end
         ? new Date(subEntity.current_end * 1000)
         : subscription.nextBillingDate;
-      await subscription.save({ session });
 
-      await SubscriptionPayment.findOneAndUpdate(
+      const paymentRecord = await SubscriptionPayment.findOneAndUpdate(
         { razorpayPaymentId: paymentEntity.id },
         {
           $setOnInsert: {
@@ -533,10 +534,15 @@ export async function handleSubscriptionCharged(payload) {
         { upsert: true, new: true, session }
       );
 
+      if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
+        subscription.paymentHistory.push(paymentRecord._id);
+      }
+
+      await subscription.save({ session });
+
       if (!existingPayment) {
         const user = await User.findById(subscription.userId).session(session);
         if (user) {
-          user.isTrial = false;
           await syncUserSubscriptionState(user, subscription, session);
         }
         console.log(

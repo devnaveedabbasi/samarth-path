@@ -58,7 +58,8 @@ export const syncUserSubscriptionState = async (user, subscription, session) => 
     user.isSubscribed = true;
     user.isTrial = false;
   } else if (subscription.status === 'trial') {
-    user.isSubscribed = user.isTrial === true;
+    user.isSubscribed = false;
+    user.isTrial = true;
   } else {
     user.isSubscribed = false;
     user.isTrial = false;
@@ -487,15 +488,12 @@ export async function getSubscriptionStatus(req, res) {
     await subscription.save();
 
     user.isSubscribed = false;
+    user.isTrial = false;
     await user.save();
   }
 
-  // Sync user state for active subscriptions
-  if (['trial', 'active'].includes(subscription.status)) {
-    user.isSubscribed = true; // Both trial and active get app access
-    user.subscriptionID = subscription._id;
-    await user.save();
-  }
+  // Sync user state
+  await syncUserSubscriptionState(user, subscription);
 
   // Calculate remaining days
   let remainingDays = 0;
@@ -509,7 +507,8 @@ export async function getSubscriptionStatus(req, res) {
     new ApiResponse(
       200,
       {
-        isSubscribed: ['trial', 'active'].includes(subscription.status),
+        isSubscribed: user.isSubscribed,
+        isTrial: user.isTrial,
         hasSubscription: true,
         status: subscription.status,
         expiryDate: subscription.expiryDate,
@@ -657,10 +656,10 @@ export async function razorpayWebhook(req, res) {
         await subscription.save();
 
         // Update user
-        await User.findByIdAndUpdate(subscription.userId, {
-          isSubscribed: true,
-          subscriptionID: subscription._id,
-        });
+        const user = await User.findById(subscription.userId);
+        if (user) {
+          await syncUserSubscriptionState(user, subscription);
+        }
 
         console.log(`[WEBHOOK] Subscription activated for user: ${subscription.userId}`);
       }
