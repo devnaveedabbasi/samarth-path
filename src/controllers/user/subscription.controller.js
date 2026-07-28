@@ -333,7 +333,7 @@ export async function verifyPayment(req, res) {
     subscription.planName = TRIAL_PLAN_NAME;
     subscription.price = TRIAL_PRICE;
     subscription.status = 'trial';
-    subscription.startDate = now;
+    subscription.trialStartDate = now;
     subscription.trialEndDate = trialEndDate;
     user.isTrial = true;
   } else {
@@ -638,16 +638,29 @@ export async function razorpayWebhook(req, res) {
 
       if (subscription && subscription.status !== 'active') {
         const now = new Date();
-        const { startDate, expiryDate } = createPaidWindow(now);
+        const isTrialPayment = payment.amount === TRIAL_AMOUNT_IN_PAISE;
 
-        subscription.status = 'active';
-        subscription.startDate = startDate;
-        subscription.expiryDate = expiryDate;
+        if (isTrialPayment) {
+          const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
+          subscription.planName = TRIAL_PLAN_NAME;
+          subscription.price = TRIAL_PRICE;
+          subscription.status = 'trial';
+          subscription.trialStartDate = now;
+          subscription.trialEndDate = trialEndDate;
+        } else {
+          const { startDate, expiryDate } = createPaidWindow(now);
+          subscription.planName = PLAN_NAME;
+          subscription.price = PLAN_PRICE;
+          subscription.status = 'active';
+          subscription.startDate = startDate;
+          subscription.expiryDate = expiryDate;
+          subscription.paidAt = now;
+        }
+
         subscription.razorpayPaymentId = payment.id;
         subscription.paymentStatus = 'captured';
         subscription.orderStatus = 'paid';
         subscription.paymentMethod = payment.method;
-        subscription.paidAt = now;
 
         if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
           subscription.paymentHistory.push(paymentRecord._id);
@@ -661,7 +674,7 @@ export async function razorpayWebhook(req, res) {
           await syncUserSubscriptionState(user, subscription);
         }
 
-        console.log(`[WEBHOOK] Subscription activated for user: ${subscription.userId}`);
+        console.log(`[WEBHOOK] Subscription updated for user: ${subscription.userId}`);
       }
     }
 
