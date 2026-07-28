@@ -264,7 +264,12 @@ export async function verifyRecurringSubscription(req, res) {
   if (payment.status !== 'captured') {
     throw new ApiError(400, `Payment is not captured. Current status: ${payment.status}`);
   }
-  if (payment.amount !== TRIAL_AMOUNT_IN_PAISE) {
+  // For UPI Autopay / e-mandates, the initial mandate registration transaction
+  // is often a nominal verification amount (like ₹1 or ₹2) rather than the full upfront
+  // trial amount (which gets debited separately once authenticated). Thus, we accept
+  // ₹1 (100 paise), ₹2 (200 paise), or the expected trial amount (TRIAL_AMOUNT_IN_PAISE).
+  const allowedAmounts = [100, 200, TRIAL_AMOUNT_IN_PAISE];
+  if (!allowedAmounts.includes(payment.amount)) {
     throw new ApiError(400, `Unexpected authorization amount. Got ₹${payment.amount / 100}.`);
   }
 
