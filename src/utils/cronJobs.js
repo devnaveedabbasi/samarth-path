@@ -114,50 +114,88 @@ cron.schedule('0 2 * * 0', async () => {
  * - Sends push notification when trial expires
  */
 cron.schedule('* * * * *', async () => {
-  console.log('[CRON] Running Trial Subscription Expiry Check...');
+  console.log('[CRON] 🔄 Running Trial Subscription Expiry Check...');
 
   try {
     const now = new Date();
 
+    // Find expired trial subscriptions
     const expiredTrials = await Subscription.find({
       trialEndDate: { $lte: now },
       status: 'trial'
     });
 
     if (!expiredTrials.length) {
-      console.log('[CRON] No expired trial subscriptions found');
+      console.log('[CRON] ✅ No expired trial subscriptions found');
       return;
     }
 
+    console.log(`[CRON] ⚠️ Found ${expiredTrials.length} expired trial subscriptions`);
+
     for (const sub of expiredTrials) {
-      sub.status = 'expired';
-      await sub.save();
-
-      await User.findByIdAndUpdate(sub.userId, {
-        isSubscribed: false,
-        isTrial: false        // Trial flag bhi clear karo
-      });
-
-      // Send expiry notification
       try {
-        await NotificationService.createNotification(sub.userId, {
-          type: 'subscription',
-          title: '⏰ Trial Period Expired',
-          body: 'Your 3-day free trial has ended. Subscribe now for ₹199/month to continue using the app.',
-          status: 'warning',
-          data: {
-            subscriptionId: sub._id.toString(),
-            action: 'subscribe',
-            planPrice: 199,
-          },
-          relatedEntityId: sub._id,
-          relatedEntityType: 'subscription',
-        });
-      } catch (notifErr) {
-        console.error(`[CRON] Failed to send trial expiry notification for user ${sub.userId}:`, notifErr.message);
-      }
+        // 🔥 CRITICAL: Check if this is a recurring subscription with Razorpay
+        // If it has razorpaySubscriptionId, the charge should have happened via webhook
+        // If not, mark as expired
+        if (sub.razorpaySubscriptionId) {
+          // Check if subscription was already charged (should be 'active' by now)
+          const updatedSub = await Subscription.findById(sub._id);
 
-      console.log(`[CRON] Expired trial subscription for user: ${sub.userId}`);
+          if (updatedSub.status === 'active') {
+            console.log(`[CRON] ✅ Subscription ${sub._id} already active (webhook processed), skipping`);
+            continue;
+          }
+
+          // If still trial and trialEndDate passed, mark as expired
+          // This is a fallback in case webhook didn't fire
+          sub.status = 'expired';
+          sub.trialNotificationSent = true;
+          await sub.save();
+
+          await User.findByIdAndUpdate(sub.userId, {
+            isSubscribed: false,
+            isTrial: false
+          });
+
+          console.log(`[CRON] ❌ Recurring trial expired (webhook missed) for user: ${sub.userId}`);
+        } else {
+          // Regular (non-recurring) trial subscription
+          sub.status = 'expired';
+          await sub.save();
+
+          await User.findByIdAndUpdate(sub.userId, {
+            isSubscribed: false,
+            isTrial: false
+          });
+
+          console.log(`[CRON] ❌ Regular trial expired for user: ${sub.userId}`);
+        }
+
+        // Send expiry notification
+        try {
+          await NotificationService.createNotification(sub.userId, {
+            type: 'subscription',
+            title: '⏰ Trial Period Expired',
+            body: sub.razorpaySubscriptionId
+              ? 'Your trial has ended. We attempted to auto-charge ₹199 but it failed. Please update your payment method.'
+              : 'Your 3-day free trial has ended. Subscribe now for ₹199/month to continue using the app.',
+            status: 'warning',
+            data: {
+              subscriptionId: sub._id.toString(),
+              action: 'subscribe',
+              planPrice: 199,
+              razorpaySubscriptionId: sub.razorpaySubscriptionId || null,
+            },
+            relatedEntityId: sub._id,
+            relatedEntityType: 'subscription',
+          });
+        } catch (notifErr) {
+          console.error(`[CRON] Failed to send trial expiry notification for user ${sub.userId}:`, notifErr.message);
+        }
+
+      } catch (error) {
+        console.error(`[CRON] Error processing trial ${sub._id}:`, error.message);
+      }
     }
 
     console.log(`[CRON] Total trial subscriptions expired: ${expiredTrials.length}`);
@@ -171,13 +209,13 @@ cron.schedule('* * * * *', async () => {
 });
 
 /**
- * Cron: Paid Subscription Expiry Check (every minute for testing)
+ * 🔥 UPDATED Cron: Paid Subscription Expiry Check (every minute for testing)
  * - Marks expired active (paid) subscriptions as 'expired'
  * - Updates user.isSubscribed = false
  * - Sends renewal notification
  */
 cron.schedule('* * * * *', async () => {
-  console.log('[CRON] Running Paid Subscription Expiry Check...');
+  console.log('[CRON] 🔄 Running Paid Subscription Expiry Check...');
 
   try {
     const now = new Date();
@@ -188,39 +226,61 @@ cron.schedule('* * * * *', async () => {
     });
 
     if (!expiredPaid.length) {
-      console.log('[CRON] No expired paid subscriptions found');
+      console.log('[CRON] ✅ No expired paid subscriptions found');
       return;
     }
 
+    console.log(`[CRON] ⚠️ Found ${expiredPaid.length} expired paid subscriptions`);
+
     for (const sub of expiredPaid) {
-      sub.status = 'expired';
-      await sub.save();
-
-      await User.findByIdAndUpdate(sub.userId, {
-        isSubscribed: false,
-        isTrial: false
-      });
-
-      // Send renewal notification
       try {
-        await NotificationService.createNotification(sub.userId, {
-          type: 'subscription',
-          title: '📋 Subscription Expired',
-          body: 'Your monthly subscription has expired. Renew now for ₹199/month to continue accessing all content.',
-          status: 'warning',
-          data: {
-            subscriptionId: sub._id.toString(),
-            action: 'renew',
-            planPrice: 199,
-          },
-          relatedEntityId: sub._id,
-          relatedEntityType: 'subscription',
-        });
-      } catch (notifErr) {
-        console.error(`[CRON] Failed to send paid expiry notification for user ${sub.userId}:`, notifErr.message);
-      }
+        // Check if this is a recurring subscription
+        if (sub.razorpaySubscriptionId) {
+          // If it's a recurring subscription with active status in Razorpay
+          // Don't mark as expired yet - let Razorpay handle it
+          const razorpayStatus = sub.razorpaySubscriptionStatus;
 
-      console.log(`[CRON] Expired paid subscription for user: ${sub.userId}`);
+          if (razorpayStatus === 'active' || razorpayStatus === 'authenticated') {
+            console.log(`[CRON] ⏳ Recurring subscription ${sub._id} still active in Razorpay, skipping expiry`);
+            continue;
+          }
+        }
+
+        // Mark as expired
+        sub.status = 'expired';
+        await sub.save();
+
+        await User.findByIdAndUpdate(sub.userId, {
+          isSubscribed: false,
+          isTrial: false
+        });
+
+        // Send renewal notification
+        try {
+          await NotificationService.createNotification(sub.userId, {
+            type: 'subscription',
+            title: '📋 Subscription Expired',
+            body: sub.razorpaySubscriptionId
+              ? 'Your subscription has expired. We will attempt to auto-renew on your next billing date.'
+              : 'Your monthly subscription has expired. Renew now for ₹199/month to continue accessing all content.',
+            status: 'warning',
+            data: {
+              subscriptionId: sub._id.toString(),
+              action: 'renew',
+              planPrice: 199,
+              razorpaySubscriptionId: sub.razorpaySubscriptionId || null,
+            },
+            relatedEntityId: sub._id,
+            relatedEntityType: 'subscription',
+          });
+        } catch (notifErr) {
+          console.error(`[CRON] Failed to send paid expiry notification for user ${sub.userId}:`, notifErr.message);
+        }
+
+        console.log(`[CRON] ❌ Expired paid subscription for user: ${sub.userId}`);
+      } catch (error) {
+        console.error(`[CRON] Error processing paid expiry ${sub._id}:`, error.message);
+      }
     }
 
     console.log(`[CRON] Total paid subscriptions expired: ${expiredPaid.length}`);
@@ -234,20 +294,19 @@ cron.schedule('* * * * *', async () => {
 });
 
 /**
- * Cron: Trial Ending Warning Notification (every hour)
+ * 🔥 UPDATED Cron: Trial Ending Warning Notification (every hour)
  * - Find trial subscriptions ending within the next 24 hours
  * - Send warning notification if not already sent
  * - "Aapka trial kal khatam ho raha hai, subscribe karein!"
  */
 cron.schedule('0 * * * *', async () => {
-  console.log('[CRON] Running Trial Ending Warning Check...');
+  console.log('[CRON] 🔄 Running Trial Ending Warning Check...');
 
   try {
     const now = new Date();
     const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
     // Find trial subscriptions expiring within next 24 hours
-    // that haven't been notified yet
     const endingSoonTrials = await Subscription.find({
       status: 'trial',
       trialEndDate: { $gte: now, $lte: in24Hours },
@@ -255,28 +314,38 @@ cron.schedule('0 * * * *', async () => {
     });
 
     if (!endingSoonTrials.length) {
-      console.log('[CRON] No trials ending soon');
+      console.log('[CRON] ✅ No trials ending soon');
       return;
     }
 
+    console.log(`[CRON] ⚠️ Found ${endingSoonTrials.length} trials ending soon`);
+
     for (const sub of endingSoonTrials) {
       try {
+        // Calculate hours remaining
+        const hoursRemaining = Math.ceil((sub.trialEndDate - now) / (60 * 60 * 1000));
+        const isRecurring = !!sub.razorpaySubscriptionId;
+
         await NotificationService.createNotification(sub.userId, {
           type: 'subscription',
           title: '⚠️ Trial Ending Soon!',
-          body: 'Your 3-day free trial ends today. Subscribe now for ₹199/month to keep full access to all content!',
+          body: isRecurring
+            ? `Your trial ends in ${hoursRemaining} hours. We'll auto-charge ₹${199} to your saved payment method.`
+            : `Your trial ends in ${hoursRemaining} hours. Subscribe now for ₹199/month to keep full access!`,
           status: 'warning',
           data: {
             subscriptionId: sub._id.toString(),
-            action: 'subscribe',
+            action: isRecurring ? 'manage' : 'subscribe',
             planPrice: 199,
             trialEndDate: sub.trialEndDate.toISOString(),
+            hoursRemaining,
+            isRecurring,
           },
           relatedEntityId: sub._id,
           relatedEntityType: 'subscription',
         });
 
-        // Mark notification as sent so we don't send it again
+        // Mark notification as sent
         sub.trialNotificationSent = true;
         await sub.save();
 
@@ -296,11 +365,85 @@ cron.schedule('0 * * * *', async () => {
   timezone: TIMEZONE
 });
 
-// NOTE: Recurring subscription status sync (₹5 authorization, ₹199 auto-charges,
-// halted/cancelled/completed transitions) is handled entirely by the Razorpay
-// webhook — see razorpayWebhook in controllers/user/subscription.controller.js,
-// routed at POST /api/user/subscription/webhook. No cron/polling is used for
-// Razorpay status synchronization; a previous polling-based cron job was
-// removed in favor of webhooks now that a public HTTPS endpoint is available.
+// 🔥 NEW Cron: Sync Razorpay Subscription Status (every 5 minutes)
+// - Fetches latest status from Razorpay for all active subscriptions
+// - Updates local status to match Razorpay
+// - Handles cases where webhook might have been missed
+cron.schedule('*/5 * * * *', async () => {
+  console.log('[CRON] 🔄 Syncing Razorpay subscription status...');
+
+  try {
+    // Import Razorpay and helper functions
+    const { getRazorpayInstance } = await import('../controllers/user/subscriptionRecurring.controller.js');
+    const razorpay = getRazorpayInstance();
+
+    // Find all subscriptions with Razorpay IDs that are not in terminal state
+    const activeSubs = await Subscription.find({
+      razorpaySubscriptionId: { $ne: null },
+      razorpaySubscriptionStatus: {
+        $nin: ['cancelled', 'completed', 'expired', 'halted']
+      }
+    });
+
+    if (!activeSubs.length) {
+      console.log('[CRON] ✅ No active Razorpay subscriptions to sync');
+      return;
+    }
+
+    console.log(`[CRON] ⚠️ Syncing ${activeSubs.length} Razorpay subscriptions`);
+
+    let syncedCount = 0;
+
+    for (const sub of activeSubs) {
+      try {
+        // Fetch latest from Razorpay
+        const rzpSub = await razorpay.subscriptions.fetch(sub.razorpaySubscriptionId);
+
+        if (rzpSub.status !== sub.razorpaySubscriptionStatus) {
+          // Status mismatch - update local
+          sub.razorpaySubscriptionStatus = rzpSub.status;
+
+          // If Razorpay says cancelled/completed, update local accordingly
+          if (rzpSub.status === 'cancelled' || rzpSub.status === 'completed') {
+            if (!sub.cancelledAt) {
+              sub.cancelledAt = new Date();
+            }
+          }
+
+          // Update next billing date
+          if (rzpSub.current_end) {
+            sub.nextBillingDate = new Date(rzpSub.current_end * 1000);
+          }
+
+          await sub.save();
+          syncedCount++;
+
+          console.log(`[CRON] Sync: ${sub._id} -> ${rzpSub.status}`);
+        }
+      } catch (error) {
+        console.error(`[CRON] Failed to sync subscription ${sub._id}:`, error.message);
+      }
+    }
+
+    console.log(`[CRON] ✅ Synced ${syncedCount} subscriptions`);
+
+  } catch (error) {
+    console.error('[CRON ERROR] Razorpay status sync:', error.message);
+  }
+}, {
+  scheduled: true,
+  timezone: TIMEZONE
+});
+
+console.log('[CRON] 🚀 All scheduled jobs initialized');
+console.log('[CRON] 📋 Jobs running:');
+console.log('  - Content Unlock: Every minute');
+console.log('  - Weekly Winners: Sunday 12:00 AM');
+console.log('  - Notifications Cleanup: Sunday 2:00 AM');
+console.log('  - Trial Expiry: Every minute');
+console.log('  - Paid Expiry: Every minute');
+console.log('  - Trial Warning: Every hour');
+console.log('  - Razorpay Sync: Every 5 minutes');
+
 
 console.log('[CRON]  All scheduled jobs initialized');

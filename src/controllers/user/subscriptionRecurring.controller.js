@@ -1,70 +1,98 @@
-// controllers/user/subscriptionRecurring.controller.js
-//
-// True auto-debit recurring billing via the Razorpay Subscriptions API
-// (UPI AutoPay / e-mandate). This is additive to subscription.controller.js's
-// existing manual one-time-order flow — it does not replace or modify it.
-//
-// Flow: ₹5 addon charged at mandate authorization -> 3-day trial (start_at
-// delays the first real cycle) -> ₹199 auto-charged every 30 days via the
-// Razorpay Plan (period: daily, interval: 30) until cancelled/halted.
-//
-// WEBHOOK IS THE SOURCE OF TRUTH. Razorpay delivers subscription.* /
-// payment.* events to POST /api/user/subscription/webhook (see
-// razorpayWebhook in subscription.controller.js), which dispatches into the
-// handleSubscription* functions below. Every one of those functions is
-// idempotent (safe to run more than once for the same underlying payment/
-// status), and the webhook route itself dedupes retried deliveries by raw
-// body hash — see WebhookEvent.model.js.
-//
-// No cron job or polling is used to synchronize subscription/payment status.
-//
-// verifyRecurringSubscription is NOT polling — it's a synchronous,
-// client-triggered check (same shape as the existing order-based
-// verify-payment) that runs once, immediately after Razorpay Checkout's
-// success callback fires, purely to give the user instant UI feedback
-// instead of waiting on the webhook round-trip. It performs its own
-// signature + Razorpay-API verification (never trusts the client) and
-// funnels into the exact same handleSubscriptionAuthenticated used by the
-// webhook, so there is a single source of truth for the business logic
-// either way — the webhook remains authoritative and will independently
-// confirm/reconcile the same event.
-
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
+
 import Subscription from '../../models/Subscription.model.js';
 import SubscriptionPayment from '../../models/SubscriptionPayment.model.js';
 import User from '../../models/User.model.js';
+import WebhookEvent from '../../models/WebhookEvent.model.js';
 import NotificationService from '../../services/notification.service.js';
 import { ApiError } from '../../utils/errorHandler.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { TIMEZONE } from '../../utils/date.util.js';
-import crypto from 'crypto';
-import {
-  getRazorpayInstance,
-  createPaidWindow,
-  syncUserSubscriptionState,
-  PLAN_NAME,
-  PLAN_PRICE,
-  TRIAL_PLAN_NAME,
-  TRIAL_PRICE,
-  TRIAL_DAYS,
-  DAY_MS,
-} from './subscription.controller.js';
 
-const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
+// ==============================
+// CONSTANTS & CONFIGURATION
+// ==============================
+
 // Razorpay requires a finite total_count; this is ~98 years of 30-day cycles,
 // i.e. effectively "until cancelled" for any real-world subscriber.
 const TOTAL_BILLING_CYCLES = 1200;
 const IN_FLIGHT_RAZORPAY_STATUSES = ['authenticated', 'active', 'pending'];
 const TERMINAL_RAZORPAY_STATUSES = ['cancelled', 'completed', 'expired'];
 
+export const PLAN_NAME = 'Monthly Basic';
+export const PLAN_PRICE = 199;
+const PLAN_AMOUNT_IN_PAISE = PLAN_PRICE * 100;
+
+export const TRIAL_PLAN_NAME = '3-Day Trial';
+export const TRIAL_PRICE = 5;
+const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
+
+// FOR TESTING: 5 minutes trial (change to 3 for production: 3 * 24 * 60 = 4320 minutes)
+const TRIAL_MINUTES = 5;
+export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 5 minutes in days
+const SUBSCRIPTION_DAYS = 30;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
 // ==============================
-// CREATE RECURRING SUBSCRIPTION
+// RAZORPAY INSTANCE
 // ==============================
+
+export const getRazorpayInstance = () => {
+  const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+  const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+
+  if (!keyId || !keySecret) {
+    console.error('❌ Razorpay credentials missing');
+    throw new ApiError(500, 'Payment gateway credentials are not configured.');
+  }
+
+  return new Razorpay({
+    key_id: keyId,
+    key_secret: keySecret,
+  });
+};
+
+// ==============================
+// HELPER FUNCTIONS
+// ==============================
+
+export const createPaidWindow = (baseDate = new Date()) => {
+  const startDate = new Date(baseDate);
+  const expiryDate = new Date(baseDate.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
+  return { startDate, expiryDate };
+};
+
+export const syncUserSubscriptionState = async (user, subscription, session) => {
+  user.subscriptionID = subscription._id;
+
+  if (subscription.status === 'active') {
+    user.isSubscribed = true;
+    user.isTrial = false;
+  } else if (subscription.status === 'trial') {
+    user.isSubscribed = false;
+    user.isTrial = true;
+  } else {
+    user.isSubscribed = false;
+    user.isTrial = false;
+  }
+
+  await user.save(session ? { session } : undefined);
+};
+
+// ==============================
+// 1️⃣ CREATE RECURRING SUBSCRIPTION
+// Called when: User clicks "Subscribe" button for first time
+// Flow: Creates Razorpay subscription with ₹5 addon (trial)
+// ==============================
+
 export async function createRecurringSubscription(req, res) {
   try {
     const userId = req.user._id;
 
+    // Check if plan ID is configured
     const planId = process.env.RAZORPAY_PLAN_ID?.trim();
     if (!planId) {
       throw new ApiError(
@@ -73,16 +101,27 @@ export async function createRecurringSubscription(req, res) {
       );
     }
 
+    // Get user
     const user = await User.findById(userId);
     if (!user) {
       throw new ApiError(404, 'User not found.');
     }
 
-    const subscription = await Subscription.findOne({ userId });
+    // Get or create subscription record
+    let subscription = await Subscription.findOne({ userId });
     if (!subscription) {
-      throw new ApiError(400, 'Subscription record not found. Please contact support.');
+      // Create new subscription record if doesn't exist
+      subscription = new Subscription({
+        userId,
+        planName: PLAN_NAME,
+        price: PLAN_PRICE,
+        status: 'pending',
+        paymentMethod: 'upi_autopay',
+      });
+      await subscription.save();
     }
 
+    // Check if already has active recurring subscription
     if (
       subscription.razorpaySubscriptionId &&
       IN_FLIGHT_RAZORPAY_STATUSES.includes(subscription.razorpaySubscriptionStatus)
@@ -99,6 +138,7 @@ export async function createRecurringSubscription(req, res) {
       );
     }
 
+    // Check if already has active paid subscription
     if (
       subscription.status === 'active' &&
       subscription.expiryDate &&
@@ -111,23 +151,23 @@ export async function createRecurringSubscription(req, res) {
 
     const razorpay = getRazorpayInstance();
 
-    // Reuse an existing Razorpay customer for this user if we already created one
+    // Create or reuse Razorpay customer
     let customerId = subscription.razorpayCustomerId;
     if (!customerId) {
       const customer = await razorpay.customers.create({
-        name: user.name,
+        name: user.name || 'User',
         email: user.email || undefined,
         contact: user.phone,
-        fail_existing: 0, // reuse Razorpay's existing customer for this contact instead of erroring
+        fail_existing: 0,
         notes: { userId: userId.toString() },
       });
       customerId = customer.id;
     }
 
-    // Delays the first ₹199 cycle by TRIAL_DAYS; the mandate + ₹5 addon is
-    // still collected now, during authorization.
+    // Calculate start time: current time + trial duration
     const startAt = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
 
+    // Create Razorpay subscription with addon (trial amount)
     const razorpaySubscription = await razorpay.subscriptions.create({
       plan_id: planId,
       customer_id: customerId,
@@ -150,6 +190,7 @@ export async function createRecurringSubscription(req, res) {
       },
     });
 
+    // Update local subscription
     subscription.razorpayCustomerId = customerId;
     subscription.razorpaySubscriptionId = razorpaySubscription.id;
     subscription.razorpayPlanId = planId;
@@ -159,11 +200,13 @@ export async function createRecurringSubscription(req, res) {
     subscription.paymentMethod = 'upi_autopay';
     await subscription.save();
 
+    // Link subscription to user
     if (String(user.subscriptionID || '') !== String(subscription._id)) {
       user.subscriptionID = subscription._id;
       await user.save();
     }
 
+    // Return response with checkout details
     return res.status(200).json(
       new ApiResponse(
         200,
@@ -174,7 +217,7 @@ export async function createRecurringSubscription(req, res) {
           key: process.env.RAZORPAY_KEY_ID,
           authAmount: TRIAL_PRICE,
           recurringAmount: PLAN_PRICE,
-          trialDays: TRIAL_DAYS,
+          trialDays: TRIAL_DAYS * 24 * 60, // Convert to minutes for display
         },
         'Recurring subscription created. Complete the ₹5 authorization to activate your trial.'
       )
@@ -194,22 +237,16 @@ export async function createRecurringSubscription(req, res) {
 }
 
 // ==============================
-// VERIFY RECURRING SUBSCRIPTION PAYMENT (₹5 authorization)
-// Client calls this immediately after Razorpay Checkout's success handler
-// fires (subscription-mode checkout returns razorpay_payment_id,
-// razorpay_subscription_id, razorpay_signature — same idea as the existing
-// order-based verify-payment, but the signature formula and identifiers
-// differ because this is a Subscription, not an Order).
-// This gives the user instant feedback; if the client never calls this
-// (e.g. app killed right after payment), the subscription.authenticated
-// webhook independently activates the trial regardless — the webhook is the
-// authoritative fallback, not the other way around.
+// 2️⃣ VERIFY RECURRING SUBSCRIPTION
+// Called when: Razorpay Checkout success callback fires
+// Flow: Verifies ₹5 payment signature and activates trial
 // ==============================
+
 export async function verifyRecurringSubscription(req, res) {
   const userId = req.user._id;
-
   const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
 
+  // Validate input
   if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
     throw new ApiError(
       400,
@@ -217,6 +254,7 @@ export async function verifyRecurringSubscription(req, res) {
     );
   }
 
+  // Find subscription
   const subscription = await Subscription.findOne({
     userId,
     razorpaySubscriptionId: razorpay_subscription_id,
@@ -226,7 +264,7 @@ export async function verifyRecurringSubscription(req, res) {
     throw new ApiError(404, 'Recurring subscription not found for this payment.');
   }
 
-  // Idempotency — if this specific recurring subscription is already authenticated/active, no need to re-verify.
+  // Idempotency check
   if (
     subscription.razorpaySubscriptionStatus === 'authenticated' ||
     subscription.razorpaySubscriptionStatus === 'active'
@@ -244,8 +282,7 @@ export async function verifyRecurringSubscription(req, res) {
     );
   }
 
-  // Razorpay's signature formula for Subscriptions checkout differs from Orders:
-  // hmac_sha256(razorpay_payment_id + "|" + razorpay_subscription_id, key_secret)
+  // Verify signature
   const generatedSignature = crypto
     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
     .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
@@ -255,31 +292,36 @@ export async function verifyRecurringSubscription(req, res) {
     throw new ApiError(400, 'Payment verification failed. Invalid signature.');
   }
 
+  // Fetch payment from Razorpay
   const razorpay = getRazorpayInstance();
   const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
   if (!payment) {
     throw new ApiError(404, 'Payment not found on Razorpay.');
   }
+
   if (payment.status !== 'captured') {
     throw new ApiError(400, `Payment is not captured. Current status: ${payment.status}`);
   }
-  // For UPI Autopay / e-mandates, the initial mandate registration transaction
-  // is often a nominal verification amount (like ₹1 or ₹2) rather than the full upfront
-  // trial amount (which gets debited separately once authenticated). Thus, we accept
-  // ₹1 (100 paise), ₹2 (200 paise), or the expected trial amount (TRIAL_AMOUNT_IN_PAISE).
-  const allowedAmounts = [100, 200, TRIAL_AMOUNT_IN_PAISE];
-  if (!allowedAmounts.includes(payment.amount)) {
-    throw new ApiError(400, `Unexpected authorization amount. Got ₹${payment.amount / 100}.`);
+
+  // Validate amount (only allow exact trial amount)
+  if (payment.amount !== TRIAL_AMOUNT_IN_PAISE) {
+    throw new ApiError(
+      400,
+      `Invalid authorization amount. Expected ₹${TRIAL_PRICE}, got ₹${payment.amount / 100}.`
+    );
   }
 
+  // Fetch subscription from Razorpay
   const rzpSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
 
+  // Activate trial
   await handleSubscriptionAuthenticated({
     subscription: { entity: rzpSubscription },
     payment: { entity: payment },
   });
 
+  // Get updated subscription
   const refreshed = await Subscription.findById(subscription._id);
 
   return res.status(200).json(
@@ -290,15 +332,19 @@ export async function verifyRecurringSubscription(req, res) {
         status: refreshed.status,
         trialEndDate: refreshed.trialEndDate,
         razorpaySubscriptionStatus: refreshed.razorpaySubscriptionStatus,
+        trialMinutes: TRIAL_MINUTES,
       },
-      'Payment verified. Your 3-day trial is now active.'
+      `Payment verified. Your ${TRIAL_MINUTES}-minute trial is now active.`
     )
   );
 }
 
 // ==============================
-// CANCEL RECURRING SUBSCRIPTION
+// 3️⃣ CANCEL RECURRING SUBSCRIPTION
+// Called when: User clicks "Cancel Subscription"
+// Flow: Cancels future charges, keeps access until current period ends
 // ==============================
+
 export async function cancelRecurringSubscription(req, res) {
   const userId = req.user._id;
 
@@ -307,11 +353,15 @@ export async function cancelRecurringSubscription(req, res) {
     throw new ApiError(404, 'No recurring subscription found for this user.');
   }
 
+  // Check if already cancelled
   if (TERMINAL_RAZORPAY_STATUSES.includes(subscription.razorpaySubscriptionStatus)) {
     return res.status(200).json(
       new ApiResponse(
         200,
-        { status: subscription.razorpaySubscriptionStatus, expiryDate: subscription.expiryDate },
+        {
+          status: subscription.razorpaySubscriptionStatus,
+          expiryDate: subscription.expiryDate
+        },
         'Subscription is already cancelled.'
       )
     );
@@ -319,21 +369,39 @@ export async function cancelRecurringSubscription(req, res) {
 
   try {
     const razorpay = getRazorpayInstance();
-    // cancel_at_cycle_end: stop future charges, but the user keeps access
-    // through the period already paid for (existing expiry cron handles the
-    // actual cutoff once subscription.expiryDate passes).
-    const cancelled = await razorpay.subscriptions.cancel(subscription.razorpaySubscriptionId, {
-      cancel_at_cycle_end: 1,
-    });
 
+    // Cancel at cycle end (no more charges, but keep access)
+    const cancelled = await razorpay.subscriptions.cancel(
+      subscription.razorpaySubscriptionId,
+      { cancel_at_cycle_end: 1 }
+    );
+
+    // Update local record
     subscription.razorpaySubscriptionStatus = cancelled.status;
     subscription.cancelledAt = new Date();
     await subscription.save();
 
+    // Send notification
+    await NotificationService.createNotification(userId, {
+      type: 'subscription',
+      title: '❌ Subscription Cancelled',
+      body: 'Your subscription has been cancelled. You will retain access until your current period ends.',
+      status: 'info',
+      data: {
+        subscriptionId: subscription._id.toString(),
+        expiryDate: subscription.expiryDate,
+      },
+      relatedEntityId: subscription._id,
+      relatedEntityType: 'subscription',
+    });
+
     return res.status(200).json(
       new ApiResponse(
         200,
-        { status: cancelled.status, expiryDate: subscription.expiryDate },
+        {
+          status: cancelled.status,
+          expiryDate: subscription.expiryDate
+        },
         'Subscription cancelled. No further charges will occur; you will retain access until your current period ends.'
       )
     );
@@ -350,17 +418,36 @@ export async function cancelRecurringSubscription(req, res) {
 }
 
 // ==============================
-// GET RECURRING SUBSCRIPTION STATUS
+// 4️⃣ GET RECURRING SUBSCRIPTION STATUS
+// Called when: User checks subscription status
+// Flow: Returns current subscription details
 // ==============================
+
 export async function getRecurringSubscriptionStatus(req, res) {
   const userId = req.user._id;
 
-  const subscription = await Subscription.findOne({ userId });
+  const subscription = await Subscription.findOne({ userId })
+    .populate('paymentHistory')
+    .lean();
 
   if (!subscription || !subscription.razorpaySubscriptionId) {
     return res.status(200).json(
-      new ApiResponse(200, { hasRecurringSubscription: false }, 'No recurring subscription found.')
+      new ApiResponse(
+        200,
+        {
+          hasRecurringSubscription: false,
+          subscription: null
+        },
+        'No recurring subscription found.'
+      )
     );
+  }
+
+  // Check if trial is expired but subscription not yet charged
+  const now = new Date();
+  let trialExpired = false;
+  if (subscription.status === 'trial' && subscription.trialEndDate) {
+    trialExpired = subscription.trialEndDate < now;
   }
 
   return res.status(200).json(
@@ -368,14 +455,24 @@ export async function getRecurringSubscriptionStatus(req, res) {
       200,
       {
         hasRecurringSubscription: true,
-        razorpaySubscriptionId: subscription.razorpaySubscriptionId,
-        razorpaySubscriptionStatus: subscription.razorpaySubscriptionStatus,
-        status: subscription.status,
-        nextBillingDate: subscription.nextBillingDate,
-        billingCycleCount: subscription.billingCycleCount,
-        expiryDate: subscription.expiryDate,
-        trialEndDate: subscription.trialEndDate,
-        cancelledAt: subscription.cancelledAt,
+        subscription: {
+          id: subscription._id,
+          planName: subscription.planName,
+          price: subscription.price,
+          status: subscription.status,
+          startDate: subscription.startDate,
+          expiryDate: subscription.expiryDate,
+          trialStartDate: subscription.trialStartDate,
+          trialEndDate: subscription.trialEndDate,
+          trialExpired,
+          razorpaySubscriptionId: subscription.razorpaySubscriptionId,
+          razorpaySubscriptionStatus: subscription.razorpaySubscriptionStatus,
+          nextBillingDate: subscription.nextBillingDate,
+          billingCycleCount: subscription.billingCycleCount,
+          cancelledAt: subscription.cancelledAt,
+          paymentHistory: subscription.paymentHistory,
+          paymentMethod: subscription.paymentMethod,
+        },
       },
       'Recurring subscription status retrieved.'
     )
@@ -383,46 +480,242 @@ export async function getRecurringSubscriptionStatus(req, res) {
 }
 
 // ==============================
-// WEBHOOK EVENT HANDLERS
-// Called from subscription.controller.js's razorpayWebhook dispatcher.
-// Each is idempotent — safe to run more than once for the same event.
+// 5️⃣ RAZORPAY WEBHOOK
+// Called when: Razorpay sends webhook events
+// Flow: Handles all subscription events (authenticated, charged, cancelled, etc.)
+// NO AUTH REQUIRED - Signature verified
 // ==============================
 
+export async function razorpayWebhook(req, res) {
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+  // Verify webhook signature (if secret is configured)
+  if (webhookSecret) {
+    const receivedSignature = req.headers['x-razorpay-signature'];
+
+    if (!receivedSignature) {
+      console.error('[WEBHOOK] Missing x-razorpay-signature header');
+      return res.status(400).json({ status: 'error', message: 'Missing signature' });
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(req.rawBody || JSON.stringify(req.body))
+      .digest('hex');
+
+    if (receivedSignature !== expectedSignature) {
+      console.error('[WEBHOOK] Signature mismatch');
+      return res.status(400).json({ status: 'error', message: 'Invalid signature' });
+    }
+  }
+
+  const event = req.body?.event;
+  const payload = req.body?.payload;
+
+  if (!event || typeof event !== 'string' || !payload) {
+    console.error('[WEBHOOK] Malformed payload — missing event/payload');
+    return res.status(400).json({ status: 'error', message: 'Malformed payload' });
+  }
+
+  console.log(`[WEBHOOK] Received event: ${event}`);
+
+  // Deduplicate webhook deliveries
+  const bodyForHash = req.rawBody || Buffer.from(JSON.stringify(req.body));
+  const eventHash = crypto.createHash('sha256').update(bodyForHash).digest('hex');
+
+  try {
+    await WebhookEvent.create({ hash: eventHash, event });
+  } catch (dedupError) {
+    if (dedupError.code === 11000) {
+      console.log(`[WEBHOOK] Duplicate delivery for event ${event}, skipping reprocessing`);
+      return res.status(200).json({ status: 'ok', duplicate: true });
+    }
+    console.error('[WEBHOOK] Dedup check failed, proceeding without it:', dedupError.message);
+  }
+
+  // Process event
+  try {
+    // Payment events (legacy order flow)
+    if (event === 'payment.captured') {
+      const payment = payload.payment.entity;
+      const orderId = payment.order_id;
+
+      if (!orderId) {
+        console.log('[WEBHOOK] payment.captured — no order_id, skipping');
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      const paymentRecord = await SubscriptionPayment.findOne({ razorpayOrderId: orderId });
+
+      if (paymentRecord && paymentRecord.status !== 'paid') {
+        paymentRecord.razorpayPaymentId = payment.id;
+        paymentRecord.actualPaymentMethod = payment.method;
+        paymentRecord.gatewayStatus = payment.status;
+        paymentRecord.status = 'paid';
+        paymentRecord.verifiedAt = new Date();
+        paymentRecord.gatewayResponse = payment;
+        await paymentRecord.save();
+        console.log(`[WEBHOOK] Payment record updated for order: ${orderId}`);
+      }
+
+      const subscription = await Subscription.findOne({ razorpayOrderId: orderId });
+
+      if (subscription && subscription.status !== 'active') {
+        const now = new Date();
+        const isTrialPayment = payment.amount === TRIAL_AMOUNT_IN_PAISE;
+
+        if (isTrialPayment) {
+          const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
+          subscription.planName = TRIAL_PLAN_NAME;
+          subscription.price = TRIAL_PRICE;
+          subscription.status = 'trial';
+          subscription.trialStartDate = now;
+          subscription.trialEndDate = trialEndDate;
+        } else {
+          const { startDate, expiryDate } = createPaidWindow(now);
+          subscription.planName = PLAN_NAME;
+          subscription.price = PLAN_PRICE;
+          subscription.status = 'active';
+          subscription.startDate = startDate;
+          subscription.expiryDate = expiryDate;
+          subscription.paidAt = now;
+        }
+
+        subscription.razorpayPaymentId = payment.id;
+        subscription.paymentStatus = 'captured';
+        subscription.orderStatus = 'paid';
+        subscription.paymentMethod = payment.method;
+
+        if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
+          subscription.paymentHistory.push(paymentRecord._id);
+        }
+
+        await subscription.save();
+
+        const user = await User.findById(subscription.userId);
+        if (user) {
+          await syncUserSubscriptionState(user, subscription);
+        }
+
+        console.log(`[WEBHOOK] Subscription updated for user: ${subscription.userId}`);
+      }
+    }
+
+    if (event === 'payment.failed') {
+      const payment = payload.payment.entity;
+      const orderId = payment.order_id;
+
+      if (orderId) {
+        await SubscriptionPayment.findOneAndUpdate(
+          { razorpayOrderId: orderId },
+          {
+            $set: {
+              status: 'failed',
+              gatewayStatus: payment.status,
+              gatewayResponse: payment,
+            },
+          }
+        );
+
+        await Subscription.findOneAndUpdate(
+          { razorpayOrderId: orderId },
+          {
+            $set: {
+              orderStatus: 'failed',
+              paymentStatus: 'failed',
+            },
+          }
+        );
+
+        console.log(`[WEBHOOK] Payment failed for order: ${orderId}`);
+      }
+    }
+
+    if (event === 'payment.authorized') {
+      const payment = payload.payment?.entity;
+      console.log(`[WEBHOOK] payment.authorized — payment ${payment?.id} authorized, awaiting capture`);
+    }
+
+    // Subscription events (recurring auto-debit flow)
+    if (event.startsWith('subscription.')) {
+      if (event === 'subscription.authenticated') {
+        await handleSubscriptionAuthenticated(payload);
+      } else if (event === 'subscription.activated') {
+        await handleSubscriptionActivated(payload);
+      } else if (event === 'subscription.pending') {
+        await handleSubscriptionPending(payload);
+      } else if (event === 'subscription.charged') {
+        await handleSubscriptionCharged(payload);
+      } else if (event === 'subscription.halted') {
+        await handleSubscriptionHalted(payload);
+      } else if (event === 'subscription.cancelled') {
+        await handleSubscriptionCancelled(payload);
+      } else if (event === 'subscription.completed') {
+        await handleSubscriptionCompleted(payload);
+      } else if (event === 'subscription.updated') {
+        await handleSubscriptionUpdated(payload);
+      }
+    }
+  } catch (error) {
+    console.error('[WEBHOOK] Error processing event:', error.message);
+    // Don't throw - always return 200 to Razorpay
+  }
+
+  // Always return 200 to prevent retries
+  return res.status(200).json({ status: 'ok' });
+}
+
+// ==============================
+// WEBHOOK EVENT HANDLERS
+// ==============================
+
+// 5a️⃣ SUBSCRIPTION.AUTHENTICATED
+// Called when: User completes ₹5 mandate/payment
+// Flow: Activates trial period (5 minutes for testing)
 export async function handleSubscriptionAuthenticated(payload) {
   const subEntity = payload?.subscription?.entity;
   const paymentEntity = payload?.payment?.entity;
-  if (!subEntity?.id) return;
+
+  if (!subEntity?.id) {
+    console.log('[WEBHOOK] subscription.authenticated — missing subscription entity');
+    return;
+  }
 
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      const subscription = await Subscription.findOne({ razorpaySubscriptionId: subEntity.id }).session(session);
+      const subscription = await Subscription.findOne({
+        razorpaySubscriptionId: subEntity.id
+      }).session(session);
+
       if (!subscription) {
         console.log(`[WEBHOOK] subscription.authenticated — no local subscription for ${subEntity.id}`);
         return;
       }
 
-      const alreadyActivated =
-        ['trial', 'active'].includes(subscription.status) &&
-        subscription.razorpaySubscriptionStatus === subEntity.status;
-
       const now = new Date();
+      const alreadyActivated = ['trial', 'active'].includes(subscription.status);
 
       if (!alreadyActivated) {
+        // Activate trial
         subscription.status = 'trial';
         subscription.planName = TRIAL_PLAN_NAME;
         subscription.price = TRIAL_PRICE;
         subscription.trialStartDate = now;
         subscription.trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
         subscription.trialNotificationSent = false;
+
+        console.log(`[WEBHOOK] Trial activated for user ${subscription.userId}, expires in ${TRIAL_MINUTES} minutes`);
       }
 
+      // Update subscription details
       subscription.paymentMethod = paymentEntity?.method || subscription.paymentMethod || 'upi_autopay';
       subscription.razorpaySubscriptionStatus = subEntity.status;
       subscription.nextBillingDate = subEntity.current_end
         ? new Date(subEntity.current_end * 1000)
         : subscription.nextBillingDate;
 
+      // Create payment record for trial
       if (paymentEntity?.id) {
         const paymentRecord = await SubscriptionPayment.findOneAndUpdate(
           { razorpayPaymentId: paymentEntity.id },
@@ -456,59 +749,97 @@ export async function handleSubscriptionAuthenticated(payload) {
 
       await subscription.save({ session });
 
+      // Sync user state
       const user = await User.findById(subscription.userId).session(session);
       if (user) {
         await syncUserSubscriptionState(user, subscription, session);
       }
 
+      // Send trial activation notification
+      await NotificationService.createNotification(subscription.userId, {
+        type: 'subscription',
+        title: '🎉 Trial Activated!',
+        body: `Your ${TRIAL_MINUTES}-minute trial has started. You'll be charged ₹${PLAN_PRICE} automatically after the trial ends.`,
+        status: 'success',
+        data: {
+          subscriptionId: subscription._id.toString(),
+          trialEndDate: subscription.trialEndDate,
+          trialMinutes: TRIAL_MINUTES,
+        },
+        relatedEntityId: subscription._id,
+        relatedEntityType: 'subscription',
+      });
+
       console.log(`[WEBHOOK] subscription.authenticated — trial activated for user ${subscription.userId}`);
     });
+  } catch (error) {
+    console.error('[WEBHOOK] Error in handleSubscriptionAuthenticated:', error);
   } finally {
     await session.endSession();
   }
 }
 
+// 5b️⃣ SUBSCRIPTION.CHARGED
+// Called when: Auto-debit of ₹199 occurs (after trial ends)
+// Flow: Activates paid subscription for 30 days
 export async function handleSubscriptionCharged(payload) {
   const subEntity = payload?.subscription?.entity;
   const paymentEntity = payload?.payment?.entity;
-  if (!subEntity?.id || !paymentEntity?.id) return;
 
-  // Populated only for a genuinely new charge (not a duplicate delivery),
-  // then used to notify the user after the transaction commits.
+  if (!subEntity?.id) {
+    console.log('[WEBHOOK] subscription.charged — missing subscription entity');
+    return;
+  }
+
+  if (!paymentEntity?.id) {
+    console.log('[WEBHOOK] subscription.charged — missing payment entity, cannot process');
+    return;
+  }
+
   let newChargeNotice = null;
 
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      const subscription = await Subscription.findOne({ razorpaySubscriptionId: subEntity.id }).session(session);
+      const subscription = await Subscription.findOne({
+        razorpaySubscriptionId: subEntity.id
+      }).session(session);
+
       if (!subscription) {
         console.log(`[WEBHOOK] subscription.charged — no local subscription for ${subEntity.id}`);
         return;
       }
 
-      // Idempotency: if this exact payment was already logged, only refresh
-      // status/next-billing-date — don't re-extend the access window.
+      // Check if this payment was already processed (idempotency)
       const existingPayment = await SubscriptionPayment.findOne({
         razorpayPaymentId: paymentEntity.id,
       }).session(session);
 
+      const now = new Date();
+
       if (!existingPayment) {
-        const { startDate, expiryDate } = createPaidWindow(new Date());
+        // First time seeing this payment - activate paid subscription
+        const { startDate, expiryDate } = createPaidWindow(now);
+
         subscription.status = 'active';
         subscription.planName = PLAN_NAME;
         subscription.price = PLAN_PRICE;
         subscription.startDate = startDate;
         subscription.expiryDate = expiryDate;
-        subscription.paidAt = new Date();
+        subscription.paidAt = now;
         subscription.billingCycleCount = (subscription.billingCycleCount || 0) + 1;
+
+        console.log(`[WEBHOOK] Charged ₹${PLAN_PRICE} for user ${subscription.userId}, cycle #${subscription.billingCycleCount}`);
       }
 
+      // Update subscription details
       subscription.razorpaySubscriptionStatus = subEntity.status;
       subscription.paymentMethod = paymentEntity.method || subscription.paymentMethod;
       subscription.nextBillingDate = subEntity.current_end
         ? new Date(subEntity.current_end * 1000)
         : subscription.nextBillingDate;
 
+      // Create or update payment record
       const paymentRecord = await SubscriptionPayment.findOneAndUpdate(
         { razorpayPaymentId: paymentEntity.id },
         {
@@ -527,7 +858,7 @@ export async function handleSubscriptionCharged(payload) {
             actualPaymentMethod: paymentEntity.method,
             gatewayStatus: paymentEntity.status,
             status: 'paid',
-            verifiedAt: new Date(),
+            verifiedAt: now,
             gatewayResponse: paymentEntity,
           },
         },
@@ -540,14 +871,12 @@ export async function handleSubscriptionCharged(payload) {
 
       await subscription.save({ session });
 
+      // Sync user state only for new charges
       if (!existingPayment) {
         const user = await User.findById(subscription.userId).session(session);
         if (user) {
           await syncUserSubscriptionState(user, subscription, session);
         }
-        console.log(
-          `[WEBHOOK] subscription.charged — cycle #${subscription.billingCycleCount} (₹${PLAN_PRICE}) activated for user ${subscription.userId}`
-        );
 
         newChargeNotice = {
           userId: subscription.userId,
@@ -559,15 +888,19 @@ export async function handleSubscriptionCharged(payload) {
         console.log(`[WEBHOOK] subscription.charged — duplicate delivery for payment ${paymentEntity.id}, skipped`);
       }
     });
+  } catch (error) {
+    console.error('[WEBHOOK] Error in handleSubscriptionCharged:', error);
   } finally {
     await session.endSession();
   }
 
-  // Sent after the transaction has committed, and only for a genuinely new
-  // charge — duplicate webhook deliveries for the same payment never re-notify.
+  // Send notification outside transaction (after commit)
   if (newChargeNotice) {
     try {
-      const expiryLabel = moment(newChargeNotice.expiryDate).tz(TIMEZONE).format('D MMM YYYY');
+      const expiryLabel = moment(newChargeNotice.expiryDate)
+        .tz(TIMEZONE)
+        .format('D MMM YYYY');
+
       await NotificationService.createNotification(newChargeNotice.userId, {
         type: 'subscription',
         title: '✅ Auto-Payment Successful',
@@ -591,14 +924,8 @@ export async function handleSubscriptionCharged(payload) {
   }
 }
 
-// subscription.activated / subscription.updated are pure status-sync events:
-// the actual access-granting business logic (trial activation with its
-// payment record, cycle activation with its payment record) is owned by
-// handleSubscriptionAuthenticated / handleSubscriptionCharged, which are the
-// only handlers that receive a payment entity and can log it idempotently.
-// Duplicating that logic here (without a payment entity to key off) would
-// risk granting access based on a status flip alone — so these only keep our
-// mirrored fields fresh.
+// 5c️⃣ SUBSCRIPTION.ACTIVATED
+// Called when: Razorpay marks subscription as active (status sync only)
 export async function handleSubscriptionActivated(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
@@ -621,6 +948,8 @@ export async function handleSubscriptionActivated(payload) {
   console.log(`[WEBHOOK] subscription.activated — status synced for user ${subscription.userId}`);
 }
 
+// 5d️⃣ SUBSCRIPTION.UPDATED
+// Called when: Subscription details update (status sync only)
 export async function handleSubscriptionUpdated(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
@@ -643,11 +972,8 @@ export async function handleSubscriptionUpdated(payload) {
   console.log(`[WEBHOOK] subscription.updated — status synced for user ${subscription.userId}`);
 }
 
-// A scheduled charge attempt failed but Razorpay is still retrying (grace
-// period before it gives up and fires subscription.halted). Access must NOT
-// be cut off here — only subscription.halted or the existing expiry logic
-// (natural expiryDate lapse, checked in getSubscriptionStatus/checkSubscription)
-// should end access. This only records the pending state for visibility.
+// 5e️⃣ SUBSCRIPTION.PENDING
+// Called when: Charge attempt failed but retrying (no access change)
 export async function handleSubscriptionPending(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
@@ -665,6 +991,8 @@ export async function handleSubscriptionPending(payload) {
   );
 }
 
+// 5f️⃣ SUBSCRIPTION.HALTED
+// Called when: All retries exhausted, no more charges (access continues until expiry)
 export async function handleSubscriptionHalted(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
@@ -675,16 +1003,13 @@ export async function handleSubscriptionHalted(payload) {
   subscription.razorpaySubscriptionStatus = subEntity.status;
   await subscription.save();
 
-  // No further Razorpay charges will occur. We deliberately don't cut access
-  // off here — the pre-existing local expiry cron (unrelated to Razorpay
-  // status sync; it only checks our own stored expiryDate/trialEndDate,
-  // same as the legacy one-time-order flow) will flip status to 'expired'
-  // once the already-paid-for period naturally ends.
   console.log(
-    `[WEBHOOK] subscription.halted — retries exhausted for user ${subscription.userId}; access lapses at ${subscription.expiryDate} via the existing expiry cron`
+    `[WEBHOOK] subscription.halted — retries exhausted for user ${subscription.userId}; access lapses at ${subscription.expiryDate}`
   );
 }
 
+// 5g️⃣ SUBSCRIPTION.CANCELLED
+// Called when: Subscription cancelled (no more charges, access until expiry)
 export async function handleSubscriptionCancelled(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
@@ -699,10 +1024,12 @@ export async function handleSubscriptionCancelled(payload) {
   await subscription.save();
 
   console.log(
-    `[WEBHOOK] subscription.cancelled — user ${subscription.userId} retains access until ${subscription.expiryDate}, then expires via the existing expiry cron`
+    `[WEBHOOK] subscription.cancelled — user ${subscription.userId} retains access until ${subscription.expiryDate}`
   );
 }
 
+// 5h️⃣ SUBSCRIPTION.COMPLETED
+// Called when: All billing cycles completed
 export async function handleSubscriptionCompleted(payload) {
   const subEntity = payload?.subscription?.entity;
   if (!subEntity?.id) return;
