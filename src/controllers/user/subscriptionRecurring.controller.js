@@ -97,9 +97,10 @@ export const syncUserSubscriptionState = async (user, subscription, session) => 
 export async function createRecurringSubscription(req, res) {
   try {
     const userId = req.user._id;
-
+    console.log('userId', userId);
     // Check if plan ID is configured
     const planId = process.env.RAZORPAY_PLAN_ID?.trim();
+    console.log('planId', planId);
     if (!planId) {
       throw new ApiError(
         500,
