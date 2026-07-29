@@ -88,6 +88,12 @@ export const syncUserSubscriptionState = async (user, subscription, session) => 
 // Flow: Creates Razorpay subscription with ₹5 addon (trial)
 // ==============================
 
+// ==============================
+// 1️⃣ CREATE RECURRING SUBSCRIPTION
+// Called when: User clicks "Subscribe" button for first time
+// Flow: Creates Razorpay subscription with ₹5 addon (trial)
+// ==============================
+
 export async function createRecurringSubscription(req, res) {
   try {
     const userId = req.user._id;
@@ -107,18 +113,37 @@ export async function createRecurringSubscription(req, res) {
       throw new ApiError(404, 'User not found.');
     }
 
-    // Get or create subscription record
+    // ✅ FIX: Find OR Create subscription
     let subscription = await Subscription.findOne({ userId });
+
     if (!subscription) {
-      // Create new subscription record if doesn't exist
+      // ✅ Create new subscription if doesn't exist
+      console.log(`[CREATE] No subscription found for user ${userId}, creating new...`);
+
       subscription = new Subscription({
-        userId,
+        userId: userId,
         planName: PLAN_NAME,
         price: PLAN_PRICE,
         status: 'pending',
         paymentMethod: 'upi_autopay',
+        // Set trial dates if needed
+        trialStartDate: null,
+        trialEndDate: null,
+        trialNotificationSent: false,
+        // Razorpay fields
+        razorpayCustomerId: null,
+        razorpaySubscriptionId: null,
+        razorpayPlanId: null,
+        razorpaySubscriptionStatus: null,
+        // Payment fields
+        paymentStatus: 'not_applicable',
+        orderStatus: 'created',
+        paymentHistory: [],
+        billingCycleCount: 0,
       });
+
       await subscription.save();
+      console.log(`[CREATE] ✅ New subscription created for user ${userId}`);
     }
 
     // Check if already has active recurring subscription
@@ -154,6 +179,8 @@ export async function createRecurringSubscription(req, res) {
     // Create or reuse Razorpay customer
     let customerId = subscription.razorpayCustomerId;
     if (!customerId) {
+      console.log(`[CREATE] Creating Razorpay customer for user ${userId}...`);
+
       const customer = await razorpay.customers.create({
         name: user.name || 'User',
         email: user.email || undefined,
@@ -162,12 +189,16 @@ export async function createRecurringSubscription(req, res) {
         notes: { userId: userId.toString() },
       });
       customerId = customer.id;
+      console.log(`[CREATE] ✅ Razorpay customer created: ${customerId}`);
     }
 
     // Calculate start time: current time + trial duration
     const startAt = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
+    console.log(`[CREATE] Trial will end at: ${new Date(startAt * 1000).toISOString()}`);
 
     // Create Razorpay subscription with addon (trial amount)
+    console.log(`[CREATE] Creating Razorpay subscription with plan: ${planId}`);
+
     const razorpaySubscription = await razorpay.subscriptions.create({
       plan_id: planId,
       customer_id: customerId,
@@ -189,6 +220,8 @@ export async function createRecurringSubscription(req, res) {
         subscriptionDocId: subscription._id.toString(),
       },
     });
+
+    console.log(`[CREATE] ✅ Razorpay subscription created: ${razorpaySubscription.id}`);
 
     // Update local subscription
     subscription.razorpayCustomerId = customerId;
@@ -218,6 +251,7 @@ export async function createRecurringSubscription(req, res) {
           authAmount: TRIAL_PRICE,
           recurringAmount: PLAN_PRICE,
           trialDays: TRIAL_DAYS * 24 * 60, // Convert to minutes for display
+          subscriptionId: subscription._id,
         },
         'Recurring subscription created. Complete the ₹5 authorization to activate your trial.'
       )
