@@ -11,12 +11,12 @@ const subscriptionSchema = new mongoose.Schema({
   planName: {
     type: String,
     required: true,
-    default: 'Monthly Basic'
+    default: '3-Day Trial'
   },
   price: {
     type: Number,
     required: true,
-    default: 199
+    default: 5
   },
   status: {
     type: String,

@@ -240,6 +240,16 @@ export async function createRecurringSubscription(req, res) {
       await user.save();
     }
 
+    console.log(response,
+      "razorpaySubscriptionId :",razorpaySubscription.id,
+      "status :", razorpaySubscription.status,
+      "shortUrl :", razorpaySubscription.short_url,
+      "key :", process.env.RAZORPAY_KEY_ID,
+      "authAmount :", TRIAL_PRICE,
+      "recurringAmount :", PLAN_PRICE,
+      "trialDays :", TRIAL_DAYS * 24 * 60, // Convert to minutes for display
+      "subscriptionId :", subscription._id,
+    )
     // Return response with checkout details
     return res.status(200).json(
       new ApiResponse(
@@ -280,7 +290,9 @@ export async function createRecurringSubscription(req, res) {
 export async function verifyRecurringSubscription(req, res) {
   const userId = req.user._id;
   const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
+  console.log('razorpay_payment_id:', razorpay_payment_id, 'razorpay_subscription_id:', razorpay_subscription_id, 'razorpay_signature:', razorpay_signature);
 
+  console.log(req.body,'all body of verify-payment')
   // Validate input
   if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
     throw new ApiError(
