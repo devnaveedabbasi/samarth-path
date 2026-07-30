@@ -351,11 +351,11 @@ export async function verifyRecurringSubscription(req, res) {
     throw new ApiError(400, `Payment is not captured. Current status: ${payment.status}`);
   }
 
-  // Validate amount (only allow exact trial amount)
-  if (payment.amount !== TRIAL_AMOUNT_IN_PAISE) {
+  // Validate amount (allow exact trial amount OR Razorpay's nominal mandate authorization like 1 INR or 1 paisa)
+  if (payment.amount > TRIAL_AMOUNT_IN_PAISE) {
     throw new ApiError(
       400,
-      `Invalid authorization amount. Expected ₹${TRIAL_PRICE}, got ₹${payment.amount / 100}.`
+      `Invalid authorization amount. Expected up to ₹${TRIAL_PRICE}, got ₹${payment.amount / 100}.`
     );
   }
 
