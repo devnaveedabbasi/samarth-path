@@ -30,9 +30,9 @@ export const TRIAL_PLAN_NAME = '3-Day Trial';
 export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 
-// FOR TESTING: 5 minutes trial (change to 3 for production: 3 * 24 * 60 = 4320 minutes)
-const TRIAL_MINUTES = 5;
-export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 5 minutes in days
+// FOR TESTING: 15 minutes trial (change to 3 for production: 3 * 24 * 60 = 4320 minutes)
+const TRIAL_MINUTES = 15;
+export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 15 minutes in days
 const SUBSCRIPTION_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -193,14 +193,15 @@ export async function createRecurringSubscription(req, res) {
       console.log(`[CREATE] ✅ Razorpay customer created: ${customerId}`);
     }
 
-    // Calculate start time: current time + trial duration
-    const startAt = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
+    // Calculate start time: current time + trial duration, with minimum safety buffer
+    const MIN_BUFFER_SECONDS = 15 * 60;
+    const trialEndTimestamp = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
+    const minAllowedTimestamp = Math.floor(Date.now() / 1000) + MIN_BUFFER_SECONDS;
+    const startAt = Math.max(trialEndTimestamp, minAllowedTimestamp);
+
     console.log(`[CREATE] Trial will end at: ${new Date(startAt * 1000).toISOString()}`);
 
-    // Create Razorpay subscription with addon (trial amount)
-    console.log(`[CREATE] Creating Razorpay subscription with plan: ${planId}`);
-
-    const razorpaySubscription = await razorpay.subscriptions.create({
+    const subscriptionPayload = {
       plan_id: planId,
       customer_id: customerId,
       total_count: TOTAL_BILLING_CYCLES,
@@ -220,7 +221,14 @@ export async function createRecurringSubscription(req, res) {
         userId: userId.toString(),
         subscriptionDocId: subscription._id.toString(),
       },
-    });
+    };
+
+    console.log(`[CREATE] Sending payload to Razorpay:`, JSON.stringify(subscriptionPayload, null, 2));
+
+    // Create Razorpay subscription with addon (trial amount)
+    console.log(`[CREATE] Creating Razorpay subscription with plan: ${planId}`);
+
+    const razorpaySubscription = await razorpay.subscriptions.create(subscriptionPayload);
 
     console.log(`[CREATE] ✅ Razorpay subscription created: ${razorpaySubscription.id}`);
 
@@ -240,7 +248,7 @@ export async function createRecurringSubscription(req, res) {
       await user.save();
     }
 
-    console.log(response,
+    console.log("response",
       "razorpaySubscriptionId :",razorpaySubscription.id,
       "status :", razorpaySubscription.status,
       "shortUrl :", razorpaySubscription.short_url,
@@ -718,7 +726,7 @@ export async function razorpayWebhook(req, res) {
 
 // 5a️⃣ SUBSCRIPTION.AUTHENTICATED
 // Called when: User completes ₹5 mandate/payment
-// Flow: Activates trial period (5 minutes for testing)
+// Flow: Activates trial period (15 minutes for testing)
 export async function handleSubscriptionAuthenticated(payload) {
   const subEntity = payload?.subscription?.entity;
   const paymentEntity = payload?.payment?.entity;
