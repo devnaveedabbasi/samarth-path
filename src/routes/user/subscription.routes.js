@@ -19,5 +19,6 @@ router.post('/recurring/create', asyncHandler(subscriptionRecurringController.cr
 router.post('/recurring/verify', asyncHandler(subscriptionRecurringController.verifyRecurringSubscription));
 router.post('/recurring/cancel', asyncHandler(subscriptionRecurringController.cancelRecurringSubscription));
 router.get('/recurring/status', asyncHandler(subscriptionRecurringController.getRecurringSubscriptionStatus));
+router.post('/recurring/sync', asyncHandler(subscriptionRecurringController.syncSubscriptionFromRazorpay));
 
 export default router;

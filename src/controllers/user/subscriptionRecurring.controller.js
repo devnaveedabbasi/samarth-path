@@ -536,7 +536,131 @@ export async function getRecurringSubscriptionStatus(req, res) {
 }
 
 // ==============================
-// 5️⃣ RAZORPAY WEBHOOK
+// 5️⃣ SYNC SUBSCRIPTION FROM RAZORPAY
+// Called when: Webhook was missed (e.g., local dev) and DB is out of sync
+// Flow: Fetches live data from Razorpay and updates local subscription
+// ==============================
+
+export async function syncSubscriptionFromRazorpay(req, res) {
+  const userId = req.user._id;
+
+  const subscription = await Subscription.findOne({ userId });
+
+  if (!subscription || !subscription.razorpaySubscriptionId) {
+    throw new ApiError(404, 'No recurring subscription found for this user.');
+  }
+
+  const razorpay = getRazorpayInstance();
+
+  // Fetch live subscription from Razorpay
+  const rzpSub = await razorpay.subscriptions.fetch(subscription.razorpaySubscriptionId);
+
+  console.log(`[SYNC] Razorpay subscription status: ${rzpSub.status}, paid_count: ${rzpSub.paid_count}`);
+
+  // Update razorpay status and next billing date
+  subscription.razorpaySubscriptionStatus = rzpSub.status;
+  if (rzpSub.current_end) {
+    subscription.nextBillingDate = new Date(rzpSub.current_end * 1000);
+  }
+
+  // If Razorpay shows paid_count > 0 but our local billingCycleCount is 0 → webhook was missed
+  const missedCharge = (rzpSub.paid_count || 0) > (subscription.billingCycleCount || 0);
+
+  if (missedCharge && subscription.status !== 'active') {
+    console.log(`[SYNC] Missed charge detected! Razorpay paid_count=${rzpSub.paid_count}, local count=${subscription.billingCycleCount}`);
+
+    // Fetch payments for this subscription from Razorpay
+    const payments = await razorpay.subscriptions.fetchAllPayments(subscription.razorpaySubscriptionId);
+    const capturedPayments = (payments?.items || []).filter(
+      (p) => p.status === 'captured' && p.amount === PLAN_AMOUNT_IN_PAISE
+    );
+
+    if (capturedPayments.length > 0) {
+      const now = new Date();
+      const { startDate, expiryDate } = createPaidWindow(now);
+
+      subscription.status = 'active';
+      subscription.planName = PLAN_NAME;
+      subscription.price = PLAN_PRICE;
+      subscription.startDate = startDate;
+      subscription.expiryDate = expiryDate;
+      subscription.paidAt = now;
+      subscription.billingCycleCount = rzpSub.paid_count;
+
+      // Save payment records that are missing
+      for (const payment of capturedPayments) {
+        const exists = await SubscriptionPayment.findOne({ razorpayPaymentId: payment.id });
+        if (!exists) {
+          const record = await SubscriptionPayment.create({
+            userId: subscription.userId,
+            subscriptionId: subscription._id,
+            razorpaySubscriptionId: rzpSub.id,
+            razorpayPaymentId: payment.id,
+            razorpayOrderId: payment.order_id || `sync_${rzpSub.id}_${payment.id}`,
+            planName: PLAN_NAME,
+            amount: payment.amount,
+            currency: payment.currency || 'INR',
+            requestedPaymentMethod: 'upi_autopay',
+            actualPaymentMethod: payment.method,
+            gatewayStatus: payment.status,
+            status: 'paid',
+            verifiedAt: new Date(payment.created_at * 1000),
+            gatewayResponse: payment,
+          });
+
+          if (!subscription.paymentHistory.includes(record._id)) {
+            subscription.paymentHistory.push(record._id);
+          }
+        }
+      }
+
+      await subscription.save();
+
+      // Sync user state
+      const user = await User.findById(subscription.userId);
+      if (user) {
+        await syncUserSubscriptionState(user, subscription);
+      }
+
+      console.log(`[SYNC] ✅ Subscription activated for user ${userId} after detecting missed webhook`);
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            synced: true,
+            missedWebhook: true,
+            status: subscription.status,
+            expiryDate: subscription.expiryDate,
+            billingCycleCount: subscription.billingCycleCount,
+          },
+          'Subscription synced from Razorpay. Missed webhook recovered — subscription is now active.'
+        )
+      );
+    }
+  }
+
+  // No missed charge — just update status
+  await subscription.save();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        synced: true,
+        missedWebhook: false,
+        razorpayStatus: rzpSub.status,
+        localStatus: subscription.status,
+        paid_count: rzpSub.paid_count,
+        nextBillingDate: subscription.nextBillingDate,
+      },
+      'Subscription synced from Razorpay.'
+    )
+  );
+}
+
+// ==============================
+// 6️⃣ RAZORPAY WEBHOOK
 // Called when: Razorpay sends webhook events
 // Flow: Handles all subscription events (authenticated, charged, cancelled, etc.)
 // NO AUTH REQUIRED - Signature verified
