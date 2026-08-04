@@ -18,7 +18,7 @@ import { TIMEZONE } from '../../utils/date.util.js';
 
 // Razorpay requires a finite total_count; this is ~98 years of 30-day cycles,
 // i.e. effectively "until cancelled" for any real-world subscriber.
-const TOTAL_BILLING_CYCLES = 1200;
+const TOTAL_BILLING_CYCLES = 50;
 const IN_FLIGHT_RAZORPAY_STATUSES = ['authenticated', 'active', 'pending'];
 const TERMINAL_RAZORPAY_STATUSES = ['cancelled', 'completed', 'expired'];
 
@@ -193,8 +193,9 @@ export async function createRecurringSubscription(req, res) {
       console.log(`[CREATE] ✅ Razorpay customer created: ${customerId}`);
     }
 
-    // Calculate start time: current time + trial duration, with minimum safety buffer
-    const MIN_BUFFER_SECONDS = 15 * 60;
+    // Calculate start time: current time + trial duration, with minimum safety buffer.
+    // Razorpay requires start_at to be at least 1 hour (3600 seconds) in the future.
+    const MIN_BUFFER_SECONDS = 60 * 60; // 1 hour minimum — Razorpay requirement
     const trialEndTimestamp = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
     const minAllowedTimestamp = Math.floor(Date.now() / 1000) + MIN_BUFFER_SECONDS;
     const startAt = Math.max(trialEndTimestamp, minAllowedTimestamp);
@@ -249,7 +250,7 @@ export async function createRecurringSubscription(req, res) {
     }
 
     console.log("response",
-      "razorpaySubscriptionId :",razorpaySubscription.id,
+      "razorpaySubscriptionId :", razorpaySubscription.id,
       "status :", razorpaySubscription.status,
       "shortUrl :", razorpaySubscription.short_url,
       "key :", process.env.RAZORPAY_KEY_ID,
@@ -300,7 +301,7 @@ export async function verifyRecurringSubscription(req, res) {
   const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
   console.log('razorpay_payment_id:', razorpay_payment_id, 'razorpay_subscription_id:', razorpay_subscription_id, 'razorpay_signature:', razorpay_signature);
 
-  console.log(req.body,'all body of verify-payment')
+  console.log(req.body, 'all body of verify-payment')
   // Validate input
   if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
     throw new ApiError(
