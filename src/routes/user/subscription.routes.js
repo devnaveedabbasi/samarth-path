@@ -8,8 +8,11 @@ const router = Router();
 
 // Razorpay webhook — NO auth required (Razorpay calls this directly)
 // Signature is verified inside the controller
-router.post('/webhook', asyncHandler(subscriptionRecurringController.razorpayWebhook));
+// router.post('/webhook', asyncHandler(subscriptionRecurringController.razorpayWebhook));
 
+router.post('/webhook', asyncHandler((req, res) => {
+    res.send("webhookworking");
+}));
 // All routes below require authentication
 router.use(authenticateToken);
 router.use(requireRole('user'));
