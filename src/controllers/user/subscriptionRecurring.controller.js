@@ -553,7 +553,29 @@ export async function syncSubscriptionFromRazorpay(req, res) {
   const razorpay = getRazorpayInstance();
 
   // Fetch live subscription from Razorpay
-  const rzpSub = await razorpay.subscriptions.fetch(subscription.razorpaySubscriptionId);
+  let rzpSub;
+  try {
+    rzpSub = await razorpay.subscriptions.fetch(subscription.razorpaySubscriptionId);
+  } catch (rzpError) {
+    const statusCode = rzpError?.statusCode || 502;
+    const description =
+      rzpError?.error?.description ||
+      rzpError?.error?.reason ||
+      rzpError?.description ||
+      'Failed to fetch subscription from Razorpay.';
+
+    console.error(`[SYNC] ❌ Razorpay fetch failed (${statusCode}):`, description);
+
+    // 406 usually means test/live mode mismatch or subscription belongs to different account
+    if (statusCode === 406) {
+      throw new ApiError(
+        502,
+        `Razorpay mode mismatch or invalid subscription: ${description}. Check if your API keys (test vs live) match the subscription ID.`
+      );
+    }
+
+    throw new ApiError(502, `Razorpay API error: ${description}`);
+  }
 
   console.log(`[SYNC] Razorpay subscription status: ${rzpSub.status}, paid_count: ${rzpSub.paid_count}`);
 
@@ -638,6 +660,55 @@ export async function syncSubscriptionFromRazorpay(req, res) {
         )
       );
     }
+  }
+
+  // ✅ FIX: Razorpay says "active" but local status is expired/trial/pending and paid_count is 0.
+  // This happens when: trial ended, Razorpay subscription is alive (mandate active, charge pending)
+  // but the subscription.charged webhook hasn't fired yet.
+  // Trust Razorpay's active status and activate locally using current_end as expiry.
+  const rzpIsActive = rzpSub.status === 'active';
+  const localNeedsActivation = ['expired', 'trial', 'pending'].includes(subscription.status);
+
+  if (rzpIsActive && localNeedsActivation) {
+    console.log(`[SYNC] Razorpay is active but local status is "${subscription.status}" with paid_count=${rzpSub.paid_count}. Activating locally based on Razorpay status.`);
+
+    const now = new Date();
+    // Use Razorpay's current_end as expiryDate (end of current billing cycle)
+    const expiryDate = rzpSub.current_end
+      ? new Date(rzpSub.current_end * 1000)
+      : new Date(now.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
+
+    subscription.status = 'active';
+    subscription.planName = PLAN_NAME;
+    subscription.price = PLAN_PRICE;
+    subscription.startDate = subscription.startDate || now;
+    subscription.expiryDate = expiryDate;
+    subscription.paidAt = subscription.paidAt || now;
+
+    await subscription.save();
+
+    const user = await User.findById(subscription.userId);
+    if (user) {
+      await syncUserSubscriptionState(user, subscription);
+    }
+
+    console.log(`[SYNC] ✅ Local subscription activated based on Razorpay active status. Expires: ${expiryDate}`);
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          synced: true,
+          missedWebhook: true,
+          razorpayStatus: rzpSub.status,
+          localStatus: subscription.status,
+          paid_count: rzpSub.paid_count,
+          expiryDate: subscription.expiryDate,
+          nextBillingDate: subscription.nextBillingDate,
+        },
+        'Subscription synced from Razorpay. Local status updated to active.'
+      )
+    );
   }
 
   // No missed charge — just update status

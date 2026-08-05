@@ -59,6 +59,28 @@ const errorHandler = (err, req, res, next) => {
   }
 
   // ========================
+  //  Razorpay SDK Error
+  //  Razorpay throws plain objects like { statusCode: 406, error: { description: '...' } }
+  //  They are NOT instances of Error so they fall through to here.
+  // ========================
+  if (err && err.statusCode && !err.message) {
+    const rzpDesc =
+      err.error?.description ||
+      err.error?.reason ||
+      err.description ||
+      `Razorpay API error (${err.statusCode})`;
+
+    console.error('[errorHandler] Razorpay SDK error:', JSON.stringify(err));
+
+    return res.status(err.statusCode < 600 ? err.statusCode : 500).json({
+      success: false,
+      code: err.statusCode,
+      message: rzpDesc,
+      data: null,
+    });
+  }
+
+  // ========================
   //  Final fallback
   // ========================
   return res.status(500).json({
