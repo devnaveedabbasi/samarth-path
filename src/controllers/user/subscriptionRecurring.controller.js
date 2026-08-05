@@ -30,9 +30,11 @@ export const TRIAL_PLAN_NAME = '3-Day Trial';
 export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 
-// FOR TESTING: 15 minutes trial (change to 3 for production: 3 * 24 * 60 = 4320 minutes)
-const TRIAL_MINUTES = 15;
-export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 15 minutes in days
+// FOR TESTING: Set trial to 24 hours (1440 minutes) minimum for UPI AutoPay testing.
+// NOTE: UPI AutoPay requires a 24-hour pre-debit notification before the first recurring charge.
+// If the trial is less than 24 hours, banks will reject the automated debit or hold the payment.
+const TRIAL_MINUTES = 1440;
+export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 1 day trial (24 hours)
 const SUBSCRIPTION_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -585,10 +587,10 @@ export async function syncSubscriptionFromRazorpay(req, res) {
     subscription.nextBillingDate = new Date(rzpSub.current_end * 1000);
   }
 
-  // If Razorpay shows paid_count > 0 but our local billingCycleCount is 0 → webhook was missed
+  // If Razorpay shows paid_count > local count → webhook was missed
   const missedCharge = (rzpSub.paid_count || 0) > (subscription.billingCycleCount || 0);
 
-  if (missedCharge && subscription.status !== 'active') {
+  if (missedCharge) {
     console.log(`[SYNC] Missed charge detected! Razorpay paid_count=${rzpSub.paid_count}, local count=${subscription.billingCycleCount}`);
 
     // Fetch payments for this subscription from Razorpay
@@ -599,7 +601,11 @@ export async function syncSubscriptionFromRazorpay(req, res) {
 
     if (capturedPayments.length > 0) {
       const now = new Date();
-      const { startDate, expiryDate } = createPaidWindow(now);
+      // Align start and expiry dates with Razorpay billing cycle dates when possible
+      const startDate = rzpSub.current_start ? new Date(rzpSub.current_start * 1000) : now;
+      const expiryDate = rzpSub.current_end
+        ? new Date(rzpSub.current_end * 1000)
+        : new Date(now.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
 
       subscription.status = 'active';
       subscription.planName = PLAN_NAME;
@@ -644,7 +650,7 @@ export async function syncSubscriptionFromRazorpay(req, res) {
         await syncUserSubscriptionState(user, subscription);
       }
 
-      console.log(`[SYNC] ✅ Subscription activated for user ${userId} after detecting missed webhook`);
+      console.log(`[SYNC] ✅ Subscription synced for user ${userId} after detecting missed webhook`);
 
       return res.status(200).json(
         new ApiResponse(

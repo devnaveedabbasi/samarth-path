@@ -21,13 +21,13 @@ const response = await fetch('https://api.razorpay.com/v1/plans', {
     Authorization: `Basic ${auth}`,
   },
   body: JSON.stringify({
-    period: 'daily',
-    interval: 30,
+    period: 'monthly',
+    interval: 1,
     item: {
       name: 'Monthly Basic',
       amount: 19900,
       currency: 'INR',
-      description: 'Recurring ₹199 every 30 days',
+      description: 'Recurring ₹199 every month',
     },
   }),
 });
