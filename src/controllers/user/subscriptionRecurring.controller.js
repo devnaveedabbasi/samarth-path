@@ -30,11 +30,11 @@ export const TRIAL_PLAN_NAME = '3-Day Trial';
 export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 
-// FOR TESTING: Set trial to 24 hours (1440 minutes) minimum for UPI AutoPay testing.
-// NOTE: UPI AutoPay requires a 24-hour pre-debit notification before the first recurring charge.
-// If the trial is less than 24 hours, banks will reject the automated debit or hold the payment.
-const TRIAL_MINUTES = 1440;
-export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 1 day trial (24 hours)
+// 3-day trial. UPI AutoPay requires at least a 24-hour pre-debit notification before
+// the first recurring charge — 3 days comfortably satisfies that minimum, so the
+// autopay debit fires automatically right when the trial ends.
+const TRIAL_MINUTES = 3 * 24 * 60; // 4320 minutes = 3 days
+export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 3 days
 const SUBSCRIPTION_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 

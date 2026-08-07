@@ -12,7 +12,7 @@ import { uploadOnS3 } from '../../utils/s3.js';
 const SALT_ROUNDS = 10;
 const OTP_TTL_MS = 10 * 60 * 1000;
 // const OTP_TTL_MS = 1 * 60 * 1000; // 1 minute
-const TRIAL_DAYS = 5 / (24 * 60); // 5 MINUTES FOR TESTING (was 3 days)
+const TRIAL_DAYS = 3; // 3-day trial
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const RESEND_COOLDOWN_MS = 60 * 1000;
