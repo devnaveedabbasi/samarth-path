@@ -21,6 +21,12 @@ export async function adminRegister(req, res) {
     throw new ApiError(403, 'Unauthorized to register admin.');
   }
 
+  // Only one admin is allowed in the system.
+  const existingAdmin = await User.findOne({ role: 'admin' }).select('_id');
+  if (existingAdmin) {
+    throw new ApiError(409, 'Admin already exists.');
+  }
+
   const name = String(req.body.name || '').trim();
   const phone = String(req.body.phone || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
