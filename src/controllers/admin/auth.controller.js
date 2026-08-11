@@ -21,6 +21,12 @@ export async function adminRegister(req, res) {
     throw new ApiError(403, 'Unauthorized to register admin.');
   }
 
+  // Check if an admin already exists to prevent duplicate admins
+  const adminExists = await User.findOne({ role: 'admin' }).select('_id');
+  if (adminExists) {
+    throw new ApiError(409, 'Admin already exists.');
+  }
+
   const name = String(req.body.name || '').trim();
   const phone = String(req.body.phone || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
@@ -51,16 +57,37 @@ export async function adminRegister(req, res) {
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  const user = await User.create({
-    name,
-    phone,
-    email,
-    password: hashedPassword,
-    role: 'admin',
-    status: 'approved',
-    isPhoneVerified: true, // Admin doesn't need phone verification
-    isEmailVerified: true, // Assuming admin email is verified
-  });
+  // Atomically check and create admin to prevent race conditions during simultaneous requests
+  const result = await User.findOneAndUpdate(
+    { role: 'admin' },
+    {
+      $setOnInsert: {
+        name,
+        phone,
+        email,
+        password: hashedPassword,
+        role: 'admin',
+        status: 'approved',
+        isPhoneVerified: true,
+        isEmailVerified: true,
+      }
+    },
+    {
+      upsert: true,
+      returnDocument: 'after',
+      rawResult: true,
+      setDefaultsOnInsert: true
+    }
+  );
+
+
+
+  // Mongoose standard check: result holds the document directly or result.value based on rawResult
+  const user = result.value || result;
+
+  if (!user || (result.lastErrorObject && result.lastErrorObject.updatedExisting)) {
+    throw new ApiError(409, 'Admin already exists.');
+  }
 
   const token = signToken(user._id, user.role);
 

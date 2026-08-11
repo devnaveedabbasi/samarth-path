@@ -160,6 +160,13 @@ export async function createUser(req, res) {
   const password = String(req.body.password || "");
   const role = ["user", "admin"].includes(req.body.role) ? req.body.role : "user";
 
+  if (role === "admin") {
+    const adminExists = await User.findOne({ role: "admin" }).select("_id");
+    if (adminExists) {
+      throw new ApiError(409, "Admin already exists.");
+    }
+  }
+
   if (!name || !phone || !email || !password) {
     throw new ApiError(400, "Name, phone, email, and password are required.");
   }
