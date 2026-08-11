@@ -18,7 +18,7 @@ import { TIMEZONE } from '../../utils/date.util.js';
 
 // Razorpay requires a finite total_count; this is ~98 years of 30-day cycles,
 // i.e. effectively "until cancelled" for any real-world subscriber.
-const TOTAL_BILLING_CYCLES = 1200;
+const TOTAL_BILLING_CYCLES = 50;
 const IN_FLIGHT_RAZORPAY_STATUSES = ['authenticated', 'active', 'pending'];
 const TERMINAL_RAZORPAY_STATUSES = ['cancelled', 'completed', 'expired'];
 
@@ -30,9 +30,11 @@ export const TRIAL_PLAN_NAME = '3-Day Trial';
 export const TRIAL_PRICE = 5;
 const TRIAL_AMOUNT_IN_PAISE = TRIAL_PRICE * 100;
 
-// FOR TESTING: 15 minutes trial (change to 3 for production: 3 * 24 * 60 = 4320 minutes)
-const TRIAL_MINUTES = 15;
-export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 15 minutes in days
+// 3-day trial. UPI AutoPay requires at least a 24-hour pre-debit notification before
+// the first recurring charge — 3 days comfortably satisfies that minimum, so the
+// autopay debit fires automatically right when the trial ends.
+const TRIAL_MINUTES = 3 * 24 * 60; // 4320 minutes = 3 days
+export const TRIAL_DAYS = TRIAL_MINUTES / (24 * 60); // 3 days
 const SUBSCRIPTION_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -193,8 +195,9 @@ export async function createRecurringSubscription(req, res) {
       console.log(`[CREATE] ✅ Razorpay customer created: ${customerId}`);
     }
 
-    // Calculate start time: current time + trial duration, with minimum safety buffer
-    const MIN_BUFFER_SECONDS = 15 * 60;
+    // Calculate start time: current time + trial duration, with minimum safety buffer.
+    // Razorpay requires start_at to be at least 1 hour (3600 seconds) in the future.
+    const MIN_BUFFER_SECONDS = 60 * 60; // 1 hour minimum — Razorpay requirement
     const trialEndTimestamp = Math.floor((Date.now() + TRIAL_DAYS * DAY_MS) / 1000);
     const minAllowedTimestamp = Math.floor(Date.now() / 1000) + MIN_BUFFER_SECONDS;
     const startAt = Math.max(trialEndTimestamp, minAllowedTimestamp);
@@ -249,7 +252,7 @@ export async function createRecurringSubscription(req, res) {
     }
 
     console.log("response",
-      "razorpaySubscriptionId :",razorpaySubscription.id,
+      "razorpaySubscriptionId :", razorpaySubscription.id,
       "status :", razorpaySubscription.status,
       "shortUrl :", razorpaySubscription.short_url,
       "key :", process.env.RAZORPAY_KEY_ID,
@@ -300,7 +303,7 @@ export async function verifyRecurringSubscription(req, res) {
   const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
   console.log('razorpay_payment_id:', razorpay_payment_id, 'razorpay_subscription_id:', razorpay_subscription_id, 'razorpay_signature:', razorpay_signature);
 
-  console.log(req.body,'all body of verify-payment')
+  console.log(req.body, 'all body of verify-payment')
   // Validate input
   if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
     throw new ApiError(
@@ -535,7 +538,230 @@ export async function getRecurringSubscriptionStatus(req, res) {
 }
 
 // ==============================
-// 5️⃣ RAZORPAY WEBHOOK
+// 5️⃣ SYNC SUBSCRIPTION FROM RAZORPAY
+// Called when: Webhook was missed (e.g., local dev) and DB is out of sync
+// Flow: Fetches live data from Razorpay and updates local subscription
+// ==============================
+
+export async function syncSubscriptionFromRazorpay(req, res) {
+  const userId = req.user._id;
+
+  const subscription = await Subscription.findOne({ userId });
+
+  if (!subscription || !subscription.razorpaySubscriptionId) {
+    throw new ApiError(404, 'No recurring subscription found for this user.');
+  }
+
+  const razorpay = getRazorpayInstance();
+
+  // Fetch live subscription from Razorpay
+  let rzpSub;
+  try {
+    rzpSub = await razorpay.subscriptions.fetch(subscription.razorpaySubscriptionId);
+  } catch (rzpError) {
+    const statusCode = rzpError?.statusCode || 502;
+    const description =
+      rzpError?.error?.description ||
+      rzpError?.error?.reason ||
+      rzpError?.description ||
+      'Failed to fetch subscription from Razorpay.';
+
+    console.error(`[SYNC] ❌ Razorpay fetch failed (${statusCode}):`, description);
+
+    // 406 usually means test/live mode mismatch or subscription belongs to different account
+    if (statusCode === 406) {
+      throw new ApiError(
+        502,
+        `Razorpay mode mismatch or invalid subscription: ${description}. Check if your API keys (test vs live) match the subscription ID.`
+      );
+    }
+
+    throw new ApiError(502, `Razorpay API error: ${description}`);
+  }
+
+  console.log(`[SYNC] Razorpay subscription status: ${rzpSub.status}, paid_count: ${rzpSub.paid_count}`);
+
+  // Update razorpay status and next billing date
+  subscription.razorpaySubscriptionStatus = rzpSub.status;
+  if (rzpSub.current_end) {
+    subscription.nextBillingDate = new Date(rzpSub.current_end * 1000);
+  }
+
+  // If Razorpay shows paid_count > local count → webhook was missed
+  const missedCharge = (rzpSub.paid_count || 0) > (subscription.billingCycleCount || 0);
+
+  if (missedCharge) {
+    console.log(`[SYNC] Missed charge detected! Razorpay paid_count=${rzpSub.paid_count}, local count=${subscription.billingCycleCount}`);
+
+    // Fetch payments for this subscription from Razorpay
+    const payments = await razorpay.subscriptions.fetchAllPayments(subscription.razorpaySubscriptionId);
+    const capturedPayments = (payments?.items || []).filter(
+      (p) => p.status === 'captured' && p.amount === PLAN_AMOUNT_IN_PAISE
+    );
+
+    if (capturedPayments.length > 0) {
+      const now = new Date();
+      // Align start and expiry dates with Razorpay billing cycle dates when possible
+      const startDate = rzpSub.current_start ? new Date(rzpSub.current_start * 1000) : now;
+      const expiryDate = rzpSub.current_end
+        ? new Date(rzpSub.current_end * 1000)
+        : new Date(now.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
+
+      subscription.status = 'active';
+      subscription.planName = PLAN_NAME;
+      subscription.price = PLAN_PRICE;
+      subscription.startDate = startDate;
+      subscription.expiryDate = expiryDate;
+      subscription.paidAt = now;
+      subscription.billingCycleCount = rzpSub.paid_count;
+
+      // Save payment records that are missing
+      for (const payment of capturedPayments) {
+        const exists = await SubscriptionPayment.findOne({ razorpayPaymentId: payment.id });
+        if (!exists) {
+          const record = await SubscriptionPayment.create({
+            userId: subscription.userId,
+            subscriptionId: subscription._id,
+            razorpaySubscriptionId: rzpSub.id,
+            razorpayPaymentId: payment.id,
+            razorpayOrderId: payment.order_id || `sync_${rzpSub.id}_${payment.id}`,
+            planName: PLAN_NAME,
+            amount: payment.amount,
+            currency: payment.currency || 'INR',
+            requestedPaymentMethod: 'upi_autopay',
+            actualPaymentMethod: payment.method,
+            gatewayStatus: payment.status,
+            status: 'paid',
+            verifiedAt: new Date(payment.created_at * 1000),
+            gatewayResponse: payment,
+          });
+
+          if (!subscription.paymentHistory.includes(record._id)) {
+            subscription.paymentHistory.push(record._id);
+          }
+        }
+      }
+
+      await subscription.save();
+
+      // Sync user state
+      const user = await User.findById(subscription.userId);
+      if (user) {
+        await syncUserSubscriptionState(user, subscription);
+      }
+
+      console.log(`[SYNC] ✅ Subscription synced for user ${userId} after detecting missed webhook`);
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            synced: true,
+            missedWebhook: true,
+            status: subscription.status,
+            expiryDate: subscription.expiryDate,
+            billingCycleCount: subscription.billingCycleCount,
+          },
+          'Subscription synced from Razorpay. Missed webhook recovered — subscription is now active.'
+        )
+      );
+    }
+  }
+
+  // ✅ FIX: Razorpay says "active" but local status is expired/trial/pending and paid_count is 0.
+  // This happens when: trial ended, Razorpay subscription is alive (mandate active, charge pending)
+  // but the subscription.charged webhook hasn't fired yet.
+  // Trust Razorpay's active status and activate locally using current_end as expiry.
+  const rzpIsActive = rzpSub.status === 'active';
+  const localNeedsActivation = ['expired', 'trial', 'pending'].includes(subscription.status);
+
+  if (rzpIsActive && localNeedsActivation) {
+    console.log(`[SYNC] Razorpay is active but local status is "${subscription.status}" with paid_count=${rzpSub.paid_count}. Activating locally based on Razorpay status.`);
+
+    const now = new Date();
+    // Use Razorpay's current_end as expiryDate (end of current billing cycle)
+    const expiryDate = rzpSub.current_end
+      ? new Date(rzpSub.current_end * 1000)
+      : new Date(now.getTime() + SUBSCRIPTION_DAYS * DAY_MS);
+
+    subscription.status = 'active';
+    subscription.planName = PLAN_NAME;
+    subscription.price = PLAN_PRICE;
+    subscription.startDate = subscription.startDate || now;
+    subscription.expiryDate = expiryDate;
+    subscription.paidAt = subscription.paidAt || now;
+
+    // Sync billingCycleCount from Razorpay paid_count.
+    // If Razorpay shows paid_count > 0, use it directly.
+    // If paid_count is 0 but a real captured SubscriptionPayment record exists in DB,
+    // it means the subscription.charged webhook already fired and processed the payment
+    // but Razorpay's paid_count is lagging. In that case, trust our DB count.
+    // NOTE: Do NOT use paidAt as proof — the sync itself sets paidAt, so it's unreliable.
+    if ((rzpSub.paid_count || 0) > (subscription.billingCycleCount || 0)) {
+      subscription.billingCycleCount = rzpSub.paid_count;
+      console.log(`[SYNC] billingCycleCount synced from Razorpay paid_count: ${subscription.billingCycleCount}`);
+    } else if ((rzpSub.paid_count || 0) === 0 && (subscription.billingCycleCount || 0) === 0) {
+      // Razorpay paid_count may lag — check if a real captured payment record exists in our DB
+      const capturedPaymentCount = await SubscriptionPayment.countDocuments({
+        subscriptionId: subscription._id,
+        status: 'paid',
+      });
+      if (capturedPaymentCount > 0) {
+        subscription.billingCycleCount = capturedPaymentCount;
+        console.log(`[SYNC] paid_count=0 (Razorpay lag) but ${capturedPaymentCount} captured payment(s) found in DB — setting billingCycleCount=${capturedPaymentCount}`);
+      } else {
+        console.log(`[SYNC] paid_count=0 and no captured payments in DB — billingCycleCount stays 0 (payment still pending capture)`);
+      }
+    }
+
+    await subscription.save();
+
+    const user = await User.findById(subscription.userId);
+    if (user) {
+      await syncUserSubscriptionState(user, subscription);
+    }
+
+    console.log(`[SYNC] ✅ Local subscription activated based on Razorpay active status. billingCycleCount=${subscription.billingCycleCount}. Expires: ${expiryDate}`);
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          synced: true,
+          missedWebhook: true,
+          razorpayStatus: rzpSub.status,
+          localStatus: subscription.status,
+          paid_count: rzpSub.paid_count,
+          billingCycleCount: subscription.billingCycleCount,
+          expiryDate: subscription.expiryDate,
+          nextBillingDate: subscription.nextBillingDate,
+        },
+        'Subscription synced from Razorpay. Local status updated to active.'
+      )
+    );
+  }
+
+  // No missed charge — just update status
+  await subscription.save();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        synced: true,
+        missedWebhook: false,
+        razorpayStatus: rzpSub.status,
+        localStatus: subscription.status,
+        paid_count: rzpSub.paid_count,
+        nextBillingDate: subscription.nextBillingDate,
+      },
+      'Subscription synced from Razorpay.'
+    )
+  );
+}
+
+// ==============================
+// 6️⃣ RAZORPAY WEBHOOK
 // Called when: Razorpay sends webhook events
 // Flow: Handles all subscription events (authenticated, charged, cancelled, etc.)
 // NO AUTH REQUIRED - Signature verified
@@ -594,65 +820,82 @@ export async function razorpayWebhook(req, res) {
     if (event === 'payment.captured') {
       const payment = payload.payment.entity;
       const orderId = payment.order_id;
+      const subscriptionId = payment.subscription_id;
 
-      if (!orderId) {
-        console.log('[WEBHOOK] payment.captured — no order_id, skipping');
+      if (!orderId && !subscriptionId) {
+        console.log('[WEBHOOK] payment.captured — no order_id or subscription_id, skipping');
         return res.status(200).json({ status: 'ok' });
       }
 
-      const paymentRecord = await SubscriptionPayment.findOne({ razorpayOrderId: orderId });
+      // ── Legacy order-based flow ──
+      if (orderId) {
+        const paymentRecord = await SubscriptionPayment.findOne({ razorpayOrderId: orderId });
 
-      if (paymentRecord && paymentRecord.status !== 'paid') {
-        paymentRecord.razorpayPaymentId = payment.id;
-        paymentRecord.actualPaymentMethod = payment.method;
-        paymentRecord.gatewayStatus = payment.status;
-        paymentRecord.status = 'paid';
-        paymentRecord.verifiedAt = new Date();
-        paymentRecord.gatewayResponse = payment;
-        await paymentRecord.save();
-        console.log(`[WEBHOOK] Payment record updated for order: ${orderId}`);
+        if (paymentRecord && paymentRecord.status !== 'paid') {
+          paymentRecord.razorpayPaymentId = payment.id;
+          paymentRecord.actualPaymentMethod = payment.method;
+          paymentRecord.gatewayStatus = payment.status;
+          paymentRecord.status = 'paid';
+          paymentRecord.verifiedAt = new Date();
+          paymentRecord.gatewayResponse = payment;
+          await paymentRecord.save();
+          console.log(`[WEBHOOK] Payment record updated for order: ${orderId}`);
+        }
+
+        const subscription = await Subscription.findOne({ razorpayOrderId: orderId });
+
+        if (subscription && subscription.status !== 'active') {
+          const now = new Date();
+          const isTrialPayment = payment.amount === TRIAL_AMOUNT_IN_PAISE;
+
+          if (isTrialPayment) {
+            const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
+            subscription.planName = TRIAL_PLAN_NAME;
+            subscription.price = TRIAL_PRICE;
+            subscription.status = 'trial';
+            subscription.trialStartDate = now;
+            subscription.trialEndDate = trialEndDate;
+          } else {
+            const { startDate, expiryDate } = createPaidWindow(now);
+            subscription.planName = PLAN_NAME;
+            subscription.price = PLAN_PRICE;
+            subscription.status = 'active';
+            subscription.startDate = startDate;
+            subscription.expiryDate = expiryDate;
+            subscription.paidAt = now;
+          }
+
+          subscription.razorpayPaymentId = payment.id;
+          subscription.paymentStatus = 'captured';
+          subscription.orderStatus = 'paid';
+          subscription.paymentMethod = payment.method;
+
+          if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
+            subscription.paymentHistory.push(paymentRecord._id);
+          }
+
+          await subscription.save();
+
+          const user = await User.findById(subscription.userId);
+          if (user) {
+            await syncUserSubscriptionState(user, subscription);
+          }
+
+          console.log(`[WEBHOOK] Subscription updated for user: ${subscription.userId}`);
+        }
       }
 
-      const subscription = await Subscription.findOne({ razorpayOrderId: orderId });
+      // ── UPI Autopay / subscription-based captured payment (no order_id) ──
+      // Razorpay sends payment.captured for subscription auto-debits with subscription_id but no order_id.
+      // subscription.charged should arrive too, but this acts as a reliable fallback.
+      if (subscriptionId && !orderId) {
+        console.log(`[WEBHOOK] payment.captured — subscription payment detected (sub: ${subscriptionId}, pay: ${payment.id}), delegating to subscription.charged handler`);
 
-      if (subscription && subscription.status !== 'active') {
-        const now = new Date();
-        const isTrialPayment = payment.amount === TRIAL_AMOUNT_IN_PAISE;
-
-        if (isTrialPayment) {
-          const trialEndDate = new Date(now.getTime() + TRIAL_DAYS * DAY_MS);
-          subscription.planName = TRIAL_PLAN_NAME;
-          subscription.price = TRIAL_PRICE;
-          subscription.status = 'trial';
-          subscription.trialStartDate = now;
-          subscription.trialEndDate = trialEndDate;
-        } else {
-          const { startDate, expiryDate } = createPaidWindow(now);
-          subscription.planName = PLAN_NAME;
-          subscription.price = PLAN_PRICE;
-          subscription.status = 'active';
-          subscription.startDate = startDate;
-          subscription.expiryDate = expiryDate;
-          subscription.paidAt = now;
-        }
-
-        subscription.razorpayPaymentId = payment.id;
-        subscription.paymentStatus = 'captured';
-        subscription.orderStatus = 'paid';
-        subscription.paymentMethod = payment.method;
-
-        if (paymentRecord && !subscription.paymentHistory.includes(paymentRecord._id)) {
-          subscription.paymentHistory.push(paymentRecord._id);
-        }
-
-        await subscription.save();
-
-        const user = await User.findById(subscription.userId);
-        if (user) {
-          await syncUserSubscriptionState(user, subscription);
-        }
-
-        console.log(`[WEBHOOK] Subscription updated for user: ${subscription.userId}`);
+        // Delegate to the same handler as subscription.charged for consistent processing
+        await handleSubscriptionCharged({
+          subscription: { entity: { id: subscriptionId, status: 'active', current_end: null } },
+          payment: { entity: payment },
+        });
       }
     }
 
