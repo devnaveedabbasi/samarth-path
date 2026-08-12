@@ -17,12 +17,14 @@ function publicUserDoc(user) {
 
 export async function adminRegister(req, res) {
   const secret = req.headers['x-admin-secret'];
+
   if (!secret || secret !== process.env.ADMIN_REGISTRATION_SECRET) {
     throw new ApiError(403, 'Unauthorized to register admin.');
   }
 
-  // Only one admin is allowed in the system.
+  // Only one admin is allowed
   const existingAdmin = await User.findOne({ role: 'admin' }).select('_id');
+
   if (existingAdmin) {
     throw new ApiError(409, 'Admin already exists.');
   }
@@ -33,10 +35,14 @@ export async function adminRegister(req, res) {
   const password = String(req.body.password || '');
 
   if (!name || !phone || !email || !password) {
-    throw new ApiError(400, 'Name, phone, email, and password are required.');
+    throw new ApiError(
+      400,
+      'Name, phone, email, and password are required.'
+    );
   }
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
   if (!emailRegex.test(email)) {
     throw new ApiError(400, 'Invalid email format.');
   }
@@ -46,48 +52,29 @@ export async function adminRegister(req, res) {
   }
 
   const existingPhone = await User.findOne({ phone }).select('_id');
+
   if (existingPhone) {
-    throw new ApiError(408, 'Phone number already registered.');
+    throw new ApiError(409, 'Phone number already registered.');
   }
 
   const existingEmail = await User.findOne({ email }).select('_id');
+
   if (existingEmail) {
-    throw new ApiError(408, 'Email already registered.');
+    throw new ApiError(409, 'Email already registered.');
   }
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  // Atomically check and create admin to prevent race conditions during simultaneous requests
-  const result = await User.findOneAndUpdate(
-    { role: 'admin' },
-    {
-      $setOnInsert: {
-        name,
-        phone,
-        email,
-        password: hashedPassword,
-        role: 'admin',
-        status: 'approved',
-        isPhoneVerified: true,
-        isEmailVerified: true,
-      }
-    },
-    {
-      upsert: true,
-      returnDocument: 'after',
-      rawResult: true,
-      setDefaultsOnInsert: true
-    }
-  );
-
-
-
-  // Mongoose standard check: result holds the document directly or result.value based on rawResult
-  const user = result.value || result;
-
-  if (!user || (result.lastErrorObject && result.lastErrorObject.updatedExisting)) {
-    throw new ApiError(409, 'Admin already exists.');
-  }
+  const user = await User.create({
+    name,
+    phone,
+    email,
+    password: hashedPassword,
+    role: 'admin',
+    status: 'approved',
+    isPhoneVerified: true,
+    isEmailVerified: true,
+  });
 
   const token = signToken(user._id, user.role);
 
