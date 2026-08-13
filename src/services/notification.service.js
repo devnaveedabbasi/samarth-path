@@ -2,7 +2,7 @@
 import Notification from '../models/Notification.model.js';
 import User from '../models/User.model.js';
 import sendNotification from '../utils/sendNotification.js';
-import { sendVerificationEmail } from '../utils/emailService.js';
+import { sendEmail } from '../utils/emailService.js';
 import { ApiError } from '../utils/errorHandler.js';
 import moment from 'moment-timezone';
 import { TIMEZONE } from '../utils/date.util.js';
@@ -419,7 +419,7 @@ export class NotificationService {
     `;
 
     try {
-      await sendVerificationEmail(email, subject, html);
+      await sendEmail(email, subject, html);
       console.log(`✅ Winner email sent to: ${email} (Rank #${rank})`);
     } catch (error) {
       console.error('Error sending winner email:', error);
