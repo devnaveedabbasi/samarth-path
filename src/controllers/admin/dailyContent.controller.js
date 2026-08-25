@@ -667,27 +667,23 @@ export async function createVideoContent(req, res) {
   }
 
   const getVideoDuration = (filePath) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
-        if (err) return reject(err);
-        resolve(metadata.format.duration);
+        if (err) {
+          console.error("ffprobe error:", err);
+          return resolve(0);
+        }
+        resolve(metadata?.format?.duration || 0);
       });
     });
   };
 
-  let durationSeconds;
+  let durationSeconds = 0;
   try {
     durationSeconds = await getVideoDuration(videoLocalPath);
-
-    if (durationSeconds > 420) {
-      if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
-      if (fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
-      throw new ApiError(400, "Video duration exceeds 7 minutes limit.");
-    }
   } catch (error) {
-    if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
-    if (fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
-    throw new ApiError(400, "Could not verify video duration.");
+    console.error("Could not verify video duration, defaulting to 0:", error);
+    durationSeconds = 0;
   }
 
   const videoDate = date ? new Date(date) : new Date();
@@ -872,21 +868,19 @@ export async function updateVideoContent(req, res) {
 
   if (videoLocalPath) {
     try {
-      const getVideoDuration = (filePath) => new Promise((resolve, reject) => {
+      const getVideoDuration = (filePath) => new Promise((resolve) => {
         ffmpeg.ffprobe(filePath, (err, metadata) => {
-          if (err) return reject(err);
-          resolve(metadata.format.duration);
+          if (err) {
+            console.error("ffprobe error:", err);
+            return resolve(0);
+          }
+          resolve(metadata?.format?.duration || 0);
         });
       });
 
       durationSeconds = await getVideoDuration(videoLocalPath);
-      if (durationSeconds > 420) {
-        if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
-        if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
-        throw new ApiError(400, "Video duration exceeds 7 minutes limit.");
-      }
 
-      // Duration valid — ab re-encode karo
+      // Ab re-encode karo
       const reencodeVideo = (inputPath) => {
         return new Promise((resolve, reject) => {
           const outputPath = inputPath.replace(/\.mp4$/i, '_encoded.mp4')
@@ -912,7 +906,7 @@ export async function updateVideoContent(req, res) {
       if (fs.existsSync(videoLocalPath)) fs.unlinkSync(videoLocalPath);
       if (encodedVideoPath && fs.existsSync(encodedVideoPath)) fs.unlinkSync(encodedVideoPath);
       if (thumbnailLocalPath && fs.existsSync(thumbnailLocalPath)) fs.unlinkSync(thumbnailLocalPath);
-      throw new ApiError(400, error.message || "Could not verify video duration.");
+      throw new ApiError(400, error.message || "Could not process video file.");
     }
   }
 
