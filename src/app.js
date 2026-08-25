@@ -60,11 +60,12 @@ app.options(/.*/, cors(corsOptions));
 // correct Razorpay webhook HMAC verification (Razorpay signs the raw body,
 // not the re-serialized parsed object). Parsed req.body behavior is unchanged.
 app.use(express.json({
+  limit: "50mb",
   verify: (req, _res, buf) => {
-    req.rawBody = buf;
+     req.rawBody = buf;
   }
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(requestLogger);
 
