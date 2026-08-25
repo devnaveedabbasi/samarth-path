@@ -3,7 +3,7 @@ import { Router } from 'express';
 import * as adminDailyContentController from '../../controllers/admin/dailyContent.controller.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { authMiddleware as authenticateToken, authorize as requireRole } from '../../middleware/auth.js';
-import { upload } from '../../middleware/multer.middleware.js';
+import { upload, uploadVideo } from '../../middleware/multer.middleware.js';
 
 const router = Router();
 
@@ -32,10 +32,10 @@ router.get('/quiz/:contentId/prize', asyncHandler(adminDailyContentController.ge
 
 
 // VIDEO ROUTES
-router.post("/video",  upload.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.createVideoContent));
+router.post("/video",  uploadVideo.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.createVideoContent));
 router.get('/video', asyncHandler(adminDailyContentController.getAllVideoContent));
 router.get('/video/:contentId', asyncHandler(adminDailyContentController.getVideoById));
-router.put('/video/:contentId', upload.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.updateVideoContent));
+router.put('/video/:contentId', uploadVideo.fields([{ name: "video", maxCount: 1 }, { name: "image", maxCount: 1 }]), asyncHandler(adminDailyContentController.updateVideoContent));
 router.delete('/video/:contentId', asyncHandler(adminDailyContentController.deleteVideoContent));
 
 
